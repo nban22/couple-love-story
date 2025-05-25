@@ -3,25 +3,188 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
+  --color-primary: #ec4899;
+  --color-primary-light: #f472b6;
+  --color-primary-dark: #db2777;
+  --color-secondary: #8b5cf6;
+  --color-background: #fdf2f8;
+  --color-surface: #ffffff;
+  --color-text: #1f2937;
+  --color-text-light: #6b7280;
+  --shadow-romantic: 0 4px 20px rgba(236, 72, 153, 0.15);
+  --border-radius: 0.75rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
+/* Custom shadow utility for Tailwind */
+@layer utilities {
+  .shadow-romantic {
+    box-shadow: 0 4px 20px rgba(236, 72, 153, 0.15);
   }
 }
 
+/* Base styling */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 
+               'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 50%, #f3e8ff 100%);
+  min-height: 100vh;
+}
+
+/* Typography enhancements */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Playfair Display', serif;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--color-text);
+}
+
+.font-playfair {
+  font-family: 'Playfair Display', serif;
+}
+
+/* Custom romantic components */
+.romantic-card {
+  @apply bg-white/80 backdrop-blur-sm border border-pink-200/50 rounded-xl shadow-md;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.romantic-card:hover {
+  @apply shadow-romantic border-pink-300/50 transform scale-[1.02];
+}
+
+.romantic-button {
+  @apply bg-gradient-to-r from-pink-500 to-rose-500 text-white px-6 py-3 rounded-lg font-medium;
+  @apply hover:from-pink-600 hover:to-rose-600 transition-all duration-300;
+  @apply focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2;
+  @apply shadow-md hover:shadow-lg transform hover:scale-105;
+}
+
+.romantic-input {
+  @apply w-full px-4 py-3 border-2 border-pink-200 rounded-lg;
+  @apply focus:border-pink-500 focus:ring-2 focus:ring-pink-200 focus:outline-none;
+  @apply transition-all duration-300 bg-white/70 backdrop-blur-sm;
+}
+
+/* Toast customization */
+.romantic-toast {
+  @apply rounded-xl border border-pink-200;
+  background: linear-gradient(135deg, rgba(253, 242, 248, 0.95) 0%, rgba(252, 231, 243, 0.95) 100%);
+  backdrop-filter: blur(10px);
+  color: #be185d;
+}
+
+.romantic-progress {
+  background: linear-gradient(90deg, #ec4899, #f472b6);
+}
+
+/* Loading animations */
+.loading-heart {
+  animation: heartbeat 1.5s ease-in-out infinite;
+}
+
+@keyframes heartbeat {
+  0% { transform: scale(1); }
+  14% { transform: scale(1.1); }
+  28% { transform: scale(1); }
+  42% { transform: scale(1.1); }
+  70% { transform: scale(1); }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #ec4899, #f472b6);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #db2777, #ec4899);
+}
+
+/* Selection styling */
+::selection {
+  background: rgba(236, 72, 153, 0.2);
+  color: #be185d;
+}
+
+/* Focus visible for accessibility */
+.focus-visible {
+  @apply outline-none ring-2 ring-pink-500 ring-offset-2;
+}
+
+/* Romantic gradient backgrounds */
+.bg-romantic-gradient {
+  background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 25%, #f3e8ff 50%, #ede9fe 75%, #e0e7ff 100%);
+}
+
+.bg-romantic-gradient-dark {
+  background: linear-gradient(135deg, #be185d 0%, #9d174d 50%, #7c2d12 100%);
+}
+
+/* Image loading placeholder */
+.image-placeholder {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Responsive utilities */
+@media (max-width: 640px) {
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* Print styles */
+@media print {
+  body {
+    background: white !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .romantic-card {
+    @apply border-2 border-gray-600;
+  }
+  
+  .romantic-button {
+    @apply bg-black text-white;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

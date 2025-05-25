@@ -1,0 +1,27 @@
+{
+  "name": "Our Love Story",
+  "short_name": "Love Story",
+  "description": "A beautiful digital memory book for couples",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fdf2f8",
+  "theme_color": "#ec4899",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable any"
+    }
+  ],
+  "categories": ["lifestyle", "personalization"],
+  "lang": "en-US",
+  "dir": "ltr"
+}

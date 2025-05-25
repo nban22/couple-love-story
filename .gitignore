@@ -34,3 +34,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+
+.env.local.example
+.export-include
+.export-ignore
+# export files
+export.md
