@@ -1934,7 +1934,7 @@ class DatabaseManager {
           VALUES (?, ?, ?, ?, ?)
         `
           )
-          .run("Bá An", "Kiều Trâm", "2024-12-27", "06-06", "08-12");
+          .run("Bá An", "Kiều Trâm", "2025-1-27", "06-06", "08-12");
 
         console.log("💕 Default couple information created");
       }
