@@ -29,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         const updateData = req.body;
-        const updateSuccess = db.updateEvent(eventId, updateData);
+        const updateSuccess = await db.updateEvent(eventId, updateData);
         
         if (!updateSuccess) {
           return res.status(404).json({ 
@@ -51,7 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           });
         }
 
-        const deleteSuccess = db.deleteEvent(eventId);
+        const deleteSuccess = await db.deleteEvent(eventId);
         
         if (!deleteSuccess) {
           return res.status(404).json({ 

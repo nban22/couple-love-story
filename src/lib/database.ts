@@ -1,6 +1,5 @@
-// lib/database.ts - Enhanced database with comprehensive event management
-import { join } from "path";
-import { existsSync, mkdirSync } from "fs";
+// lib/database.ts - Enhanced PostgreSQL database with comprehensive event management
+import { Pool, PoolClient } from 'pg';
 import bcrypt from "bcryptjs";
 
 /**
@@ -104,62 +103,66 @@ function isServerEnvironment(): boolean {
 }
 
 /**
- * Dynamic Database Module Loader with Error Recovery
- * Implements robust loading with fallback mechanisms
+ * PostgreSQL Connection Pool Configuration
+ * Optimized for production workloads with automatic connection management
  */
-async function loadDatabase() {
+const createConnectionPool = () => {
   if (!isServerEnvironment()) {
-    throw new Error("Database operations are server-side only");
+    throw new Error("Database connections are server-side only");
   }
 
-  try {
-    const Database = (await import("better-sqlite3")).default;
-    return Database;
-  } catch (error) {
-    console.error("Failed to load better-sqlite3:", error);
-    throw new Error(
-      "Database module loading failed - ensure better-sqlite3 is installed"
-    );
+  const connectionConfig = {
+    connectionString: process.env.DATABASE_URL,
+    // Production optimization settings
+    max: 20, // Maximum connections in pool
+    idleTimeoutMillis: 30000, // Close idle connections after 30s
+    connectionTimeoutMillis: 2000, // Timeout after 2s
+    // SSL configuration for production
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    // Connection retry and error handling
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+    // Query timeout settings
+    statement_timeout: 30000, // 30 second query timeout
+    query_timeout: 30000,
+  };
+
+  return new Pool(connectionConfig);
+};
+
+let pool: Pool | null = null;
+
+/**
+ * Get or create PostgreSQL connection pool
+ * Implements singleton pattern with proper error handling
+ */
+function getConnectionPool(): Pool {
+  if (!pool) {
+    pool = createConnectionPool();
+    
+    // Handle pool events for monitoring and debugging
+    pool.on('connect', () => {
+      console.log('🔗 PostgreSQL client connected to pool');
+    });
+    
+    pool.on('error', (err) => {
+      console.error('❌ PostgreSQL pool error:', err);
+    });
+
+    pool.on('remove', () => {
+      console.log('🔌 PostgreSQL client removed from pool');
+    });
   }
+  
+  return pool;
 }
 
 /**
- * Path Configuration with Environment Validation
- * Ensures proper directory structure and permissions
- */
-const DATA_DIR = join(process.cwd(), "src/data");
-const DB_PATH = join(DATA_DIR, "couple.db");
-const BACKUP_DIR = join(DATA_DIR, "backups");
-
-/**
- * Directory Management with Comprehensive Error Handling
- * Creates necessary directories with proper permissions
- */
-function ensureDataDirectoryExists(): boolean {
-  try {
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true, mode: 0o755 });
-      console.log(`📁 Created data directory: ${DATA_DIR}`);
-    }
-
-    if (!existsSync(BACKUP_DIR)) {
-      mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o755 });
-      console.log(`📁 Created backup directory: ${BACKUP_DIR}`);
-    }
-
-    return true;
-  } catch (error) {
-    console.error("❌ Failed to create data directories:", error);
-    return false;
-  }
-}
-
-/**
- * Enhanced DatabaseManager with Production-Grade Features
+ * Enhanced DatabaseManager with Production-Grade PostgreSQL Features
  * Implements comprehensive event management, caching, and monitoring
  */
 class DatabaseManager {
-  private db: any;
+  private pool: Pool;
   private initialized: boolean = false;
 
   // Performance monitoring and caching
@@ -173,50 +176,40 @@ class DatabaseManager {
     { count: number; totalTime: number; avgTime: number }
   >();
 
+  constructor() {
+    if (!isServerEnvironment()) {
+      throw new Error("Database can only be initialized on server");
+    }
+    this.pool = getConnectionPool();
+  }
+
   /**
    * Async Initialization with Enhanced Error Handling
-   * Implements connection pooling and optimization strategies
+   * Implements connection testing and schema management
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    if (!isServerEnvironment()) {
-      throw new Error("Database can only be initialized on server");
-    }
-
-    if (!ensureDataDirectoryExists()) {
-      throw new Error("Failed to initialize data directories");
-    }
-
     try {
-      const Database = await loadDatabase();
-
-      // Initialize database with production-optimized pragmas
-      this.db = new Database(DB_PATH);
-
-      // Performance optimization pragmas
-      this.db.pragma("journal_mode = WAL"); // Write-Ahead Logging for better concurrency
-      this.db.pragma("synchronous = NORMAL"); // Balance between safety and performance
-      this.db.pragma("cache_size = 2000"); // 2000 pages cache (~8MB for 4KB pages)
-      this.db.pragma("temp_store = MEMORY"); // Store temporary tables in memory
-      this.db.pragma("mmap_size = 268435456"); // 256MB memory-mapped I/O
-      this.db.pragma("foreign_keys = ON"); // Enable foreign key constraints
-
-      // Set initialized flag immediately after successful connection
-      this.initialized = true;
-      console.log(`✅ Database initialized: ${DB_PATH}`);
-
+      // Test database connection
+      const client = await this.pool.connect();
+      console.log(`✅ PostgreSQL connection established`);
+      
       // Initialize schema and seed data
-      await this.initializeEnhancedTables();
-      await this.createOptimizedIndexes();
-      await this.runSchemaMigrations();
-      await this.seedDefaultData();
-
+      await this.initializeEnhancedTables(client);
+      await this.createOptimizedIndexes(client);
+      await this.runSchemaMigrations(client);
+      await this.seedDefaultData(client);
+      
+      client.release();
+      this.initialized = true;
+      
       // Schedule periodic maintenance
       this.scheduleMaintenanceTasks();
+      
+      console.log('✅ PostgreSQL database initialized successfully');
     } catch (error) {
       this.initialized = false;
-      this.db = null;
       console.error("❌ Database initialization failed:", error);
       throw new Error(
         `Database initialization failed: ${
@@ -227,126 +220,153 @@ class DatabaseManager {
   }
 
   /**
-   * Enhanced Table Creation with Comprehensive Schema
+   * Enhanced Table Creation with Comprehensive PostgreSQL Schema
    * Implements proper normalization and constraint management
    */
-  private async initializeEnhancedTables(): Promise<void> {
-    this.ensureInitialized();
-
+  private async initializeEnhancedTables(client: PoolClient): Promise<void> {
     try {
-      this.db.exec(`
+      const createTablesSQL = `
+        -- Enable UUID extension for better primary keys (optional)
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
         -- Original tables (maintained for backward compatibility)
         CREATE TABLE IF NOT EXISTS couple_info (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          male_name TEXT NOT NULL,
-          female_name TEXT NOT NULL,
-          love_start_date TEXT NOT NULL,
-          male_birthday TEXT NOT NULL,
-          female_birthday TEXT NOT NULL,
-          created_at TEXT DEFAULT (datetime('now')),
-          updated_at TEXT DEFAULT (datetime('now'))
+          id SERIAL PRIMARY KEY,
+          male_name VARCHAR(100) NOT NULL,
+          female_name VARCHAR(100) NOT NULL,
+          love_start_date DATE NOT NULL,
+          male_birthday VARCHAR(5) NOT NULL, -- MM-DD format
+          female_birthday VARCHAR(5) NOT NULL, -- MM-DD format
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          email TEXT UNIQUE NOT NULL,
-          password_hash TEXT NOT NULL,
-          name TEXT NOT NULL,
-          created_at TEXT DEFAULT (datetime('now'))
+          id SERIAL PRIMARY KEY,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          name VARCHAR(100) NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS photos (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          cloudinary_id TEXT UNIQUE NOT NULL,
+          id SERIAL PRIMARY KEY,
+          cloudinary_id VARCHAR(255) UNIQUE NOT NULL,
           public_url TEXT NOT NULL,
-          title TEXT,
+          title VARCHAR(200),
           description TEXT,
-          upload_date TEXT NOT NULL,
-          created_at TEXT DEFAULT (datetime('now'))
+          upload_date TIMESTAMP WITH TIME ZONE NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- Enhanced events table with comprehensive features
+        -- Enhanced events table with comprehensive PostgreSQL features
         CREATE TABLE IF NOT EXISTS events (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          title TEXT NOT NULL,
+          id SERIAL PRIMARY KEY,
+          title VARCHAR(200) NOT NULL,
           description TEXT,
-          date TEXT NOT NULL,
-          timezone TEXT DEFAULT 'UTC',
-          is_all_day BOOLEAN DEFAULT 0,
-          location TEXT,
+          date TIMESTAMP WITH TIME ZONE NOT NULL,
+          timezone VARCHAR(50) DEFAULT 'UTC',
+          is_all_day BOOLEAN DEFAULT FALSE,
+          location VARCHAR(300),
           
-          -- Categorization and priority system
-          category TEXT DEFAULT 'other' CHECK (category IN ('anniversary', 'birthday', 'date', 'milestone', 'other')),
-          priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+          -- Categorization with CHECK constraints
+          category VARCHAR(20) DEFAULT 'other' 
+            CHECK (category IN ('anniversary', 'birthday', 'date', 'milestone', 'other')),
+          priority VARCHAR(10) DEFAULT 'medium'
+            CHECK (priority IN ('low', 'medium', 'high')),
           
-          -- Recurring event configuration (stored as JSON)
-          is_recurring BOOLEAN DEFAULT 0,
-          recurring_config TEXT, -- JSON string for RecurringEventConfig
+          -- Recurring configuration as JSONB for better performance
+          is_recurring BOOLEAN DEFAULT FALSE,
+          recurring_config JSONB,
           
-          -- Reminder and notification settings
+          -- Reminder settings
           reminder_minutes INTEGER,
           
-          -- Audit trail and versioning
-          created_at TEXT DEFAULT (datetime('now')),
-          updated_at TEXT DEFAULT (datetime('now')),
-          created_by TEXT,
-          updated_by TEXT,
+          -- Audit trail
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          created_by VARCHAR(50),
+          updated_by VARCHAR(50),
           version INTEGER DEFAULT 1,
           
-          -- Soft delete support
-          deleted_at TEXT,
+          -- Soft delete
+          deleted_at TIMESTAMP WITH TIME ZONE,
           
-          -- Full-text search optimization (generated column)
-          search_text TEXT GENERATED ALWAYS AS (
-            title || ' ' || COALESCE(description, '') || ' ' || COALESCE(location, '')
+          -- Full-text search using PostgreSQL's tsvector
+          search_vector tsvector GENERATED ALWAYS AS (
+            to_tsvector('english', 
+              title || ' ' || COALESCE(description, '') || ' ' || COALESCE(location, '')
+            )
           ) STORED
         );
 
-        -- Event change history for comprehensive audit trail
+        -- Event history for comprehensive audit trail
         CREATE TABLE IF NOT EXISTS event_history (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          event_id INTEGER NOT NULL,
-          action TEXT NOT NULL CHECK (action IN ('created', 'updated', 'deleted', 'restored')),
-          changed_fields TEXT, -- JSON array of changed field names
-          old_values TEXT,     -- JSON object of previous values
-          new_values TEXT,     -- JSON object of new values
-          changed_by TEXT,
-          changed_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+          id SERIAL PRIMARY KEY,
+          event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+          action VARCHAR(20) NOT NULL CHECK (action IN ('created', 'updated', 'deleted', 'restored')),
+          changed_fields JSONB,
+          old_values JSONB,
+          new_values JSONB,
+          changed_by VARCHAR(50),
+          changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
 
         -- Event reminders and notifications
         CREATE TABLE IF NOT EXISTS event_reminders (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          event_id INTEGER NOT NULL,
-          reminder_time TEXT NOT NULL,
-          reminder_type TEXT DEFAULT 'standard' CHECK (reminder_type IN ('standard', 'urgent', 'gentle')),
-          status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'cancelled')),
-          delivery_method TEXT DEFAULT 'browser' CHECK (delivery_method IN ('browser', 'email', 'push')),
+          id SERIAL PRIMARY KEY,
+          event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+          reminder_time TIMESTAMP WITH TIME ZONE NOT NULL,
+          reminder_type VARCHAR(20) DEFAULT 'standard' 
+            CHECK (reminder_type IN ('standard', 'urgent', 'gentle')),
+          status VARCHAR(20) DEFAULT 'pending' 
+            CHECK (status IN ('pending', 'sent', 'failed', 'cancelled')),
+          delivery_method VARCHAR(20) DEFAULT 'browser' 
+            CHECK (delivery_method IN ('browser', 'email', 'push')),
           retry_count INTEGER DEFAULT 0,
-          last_attempt TEXT,
-          created_at TEXT DEFAULT (datetime('now')),
-          FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+          last_attempt TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- Schema version tracking for migrations
+        -- Schema migrations tracking
         CREATE TABLE IF NOT EXISTS schema_migrations (
           version INTEGER PRIMARY KEY,
           description TEXT,
-          applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+          applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- Performance monitoring table
+        -- Query performance monitoring
         CREATE TABLE IF NOT EXISTS query_performance (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          query_type TEXT NOT NULL,
+          id SERIAL PRIMARY KEY,
+          query_type VARCHAR(100) NOT NULL,
           execution_time_ms REAL NOT NULL,
           result_count INTEGER,
-          executed_at TEXT DEFAULT CURRENT_TIMESTAMP
+          executed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
-      `);
 
-      console.log("📋 Enhanced database tables initialized successfully");
+        -- Create updated_at trigger function
+        CREATE OR REPLACE FUNCTION update_updated_at_column()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          NEW.updated_at = CURRENT_TIMESTAMP;
+          RETURN NEW;
+        END;
+        $$ language 'plpgsql';
+
+        -- Apply trigger to tables that need auto-updated timestamps
+        DROP TRIGGER IF EXISTS update_couple_info_updated_at ON couple_info;
+        CREATE TRIGGER update_couple_info_updated_at 
+          BEFORE UPDATE ON couple_info 
+          FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+        DROP TRIGGER IF EXISTS update_events_updated_at ON events;
+        CREATE TRIGGER update_events_updated_at 
+          BEFORE UPDATE ON events 
+          FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+      `;
+
+      await client.query(createTablesSQL);
+      console.log("📋 PostgreSQL tables initialized successfully");
     } catch (error) {
       console.error("❌ Table initialization failed:", error);
       throw error;
@@ -354,14 +374,12 @@ class DatabaseManager {
   }
 
   /**
-   * Strategic Index Creation for Optimal Query Performance
+   * Strategic Index Creation for Optimal PostgreSQL Query Performance
    * Implements covering indexes and composite indexes for common access patterns
    */
-  private async createOptimizedIndexes(): Promise<void> {
-    this.ensureInitialized();
-
+  private async createOptimizedIndexes(client: PoolClient): Promise<void> {
     try {
-      this.db.exec(`
+      const indexSQL = `
         -- Core performance indexes for events
         CREATE INDEX IF NOT EXISTS idx_events_date ON events(date) WHERE deleted_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_events_category ON events(category) WHERE deleted_at IS NULL;
@@ -377,26 +395,26 @@ class DatabaseManager {
                 WHERE deleted_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_events_user_date ON events(created_by, date) WHERE deleted_at IS NULL;
         
-        -- Full-text search optimization
-        CREATE INDEX IF NOT EXISTS idx_events_search ON events(search_text) WHERE deleted_at IS NULL;
+        -- Full-text search index using GIN
+        CREATE INDEX IF NOT EXISTS idx_events_search_vector ON events USING gin(search_vector);
         
-        -- Audit trail indexes
-        CREATE INDEX IF NOT EXISTS idx_history_event_date ON event_history(event_id, changed_at);
-        CREATE INDEX IF NOT EXISTS idx_history_user_action ON event_history(changed_by, action);
-        
-        -- Reminder system indexes
-        CREATE INDEX IF NOT EXISTS idx_reminders_time_status ON event_reminders(reminder_time, status);
-        CREATE INDEX IF NOT EXISTS idx_reminders_event ON event_reminders(event_id);
+        -- Foreign key indexes for better join performance
+        CREATE INDEX IF NOT EXISTS idx_event_history_event_id ON event_history(event_id);
+        CREATE INDEX IF NOT EXISTS idx_event_history_changed_at ON event_history(changed_at);
+        CREATE INDEX IF NOT EXISTS idx_event_reminders_event_id ON event_reminders(event_id);
+        CREATE INDEX IF NOT EXISTS idx_event_reminders_time_status ON event_reminders(reminder_time, status);
         
         -- Original table indexes (maintained)
         CREATE INDEX IF NOT EXISTS idx_photos_upload_date ON photos(upload_date);
-        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_photos_cloudinary_id ON photos(cloudinary_id);
         
         -- Performance monitoring indexes
         CREATE INDEX IF NOT EXISTS idx_query_perf_type_time ON query_performance(query_type, executed_at);
-      `);
+      `;
 
-      console.log("🚀 Database indexes created for optimal performance");
+      await client.query(indexSQL);
+      console.log("🚀 PostgreSQL indexes created for optimal performance");
     } catch (error) {
       console.error("❌ Index creation failed:", error);
       throw error;
@@ -407,38 +425,43 @@ class DatabaseManager {
    * Schema Migration System for Database Evolution
    * Handles version upgrades and data transformations safely
    */
-  private async runSchemaMigrations(): Promise<void> {
+  private async runSchemaMigrations(client: PoolClient): Promise<void> {
     const migrations = [
       {
         version: 1,
-        description: "Initial enhanced schema setup",
+        description: "Initial PostgreSQL schema setup",
         sql: `
-          -- Migration marker - enhanced schema is now active
-          INSERT OR IGNORE INTO schema_migrations (version, description) 
-          VALUES (1, 'Enhanced event system with categories, priorities, and audit trail');
+          -- Migration marker - PostgreSQL schema is now active
+          INSERT INTO schema_migrations (version, description) 
+          VALUES (1, 'Enhanced event system with PostgreSQL, categories, priorities, and audit trail')
+          ON CONFLICT (version) DO NOTHING;
         `,
       },
       {
         version: 2,
-        description: "Add search text optimization",
+        description: "Add full-text search optimization",
         sql: `
-          -- Ensure search_text column exists and is populated
-          UPDATE events SET updated_at = updated_at WHERE search_text IS NULL;
+          -- Ensure search_vector column is properly populated
+          -- This is handled by the GENERATED ALWAYS AS clause
+          INSERT INTO schema_migrations (version, description) 
+          VALUES (2, 'Full-text search vector optimization')
+          ON CONFLICT (version) DO NOTHING;
         `,
       },
     ];
 
     for (const migration of migrations) {
       try {
-        const exists = this.db
-          .prepare("SELECT 1 FROM schema_migrations WHERE version = ?")
-          .get(migration.version);
+        const result = await client.query(
+          "SELECT 1 FROM schema_migrations WHERE version = $1",
+          [migration.version]
+        );
 
-        if (!exists) {
+        if (result.rows.length === 0) {
           console.log(
             `🔄 Running migration v${migration.version}: ${migration.description}`
           );
-          this.db.exec(migration.sql);
+          await client.query(migration.sql);
           console.log(`✅ Migration v${migration.version} completed`);
         }
       } catch (error) {
@@ -453,8 +476,46 @@ class DatabaseManager {
    * Prevents runtime errors from uninitialized access
    */
   private ensureInitialized(): void {
-    if (!this.initialized || !this.db) {
+    if (!this.initialized || !this.pool) {
       throw new Error("Database not initialized. Call initialize() first.");
+    }
+  }
+
+  /**
+   * Execute Query with Performance Tracking and Error Handling
+   * Centralized query execution with comprehensive monitoring
+   */
+  private async executeQuery<T = any>(
+    query: string,
+    params: any[] = [],
+    queryType: string
+  ): Promise<{ rows: T[]; rowCount: number }> {
+    this.ensureInitialized();
+    const startTime = performance.now();
+    
+    try {
+      const result = await this.pool.query(query, params);
+      const executionTime = performance.now() - startTime;
+      
+      // Track performance metrics
+      this.trackQueryPerformance(queryType, executionTime, result.rowCount || 0);
+      
+      // Log slow queries for optimization
+      if (executionTime > 100) {
+        console.warn(
+          `🐌 Slow query detected: ${queryType} took ${executionTime.toFixed(2)}ms`
+        );
+      }
+      
+      return {
+        rows: result.rows,
+        rowCount: result.rowCount || 0
+      };
+    } catch (error) {
+      const executionTime = performance.now() - startTime;
+      console.error(`❌ Query failed (${executionTime.toFixed(2)}ms): ${queryType}`, error);
+      this.trackQueryPerformance(`${queryType}_error`, executionTime, 0);
+      throw error;
     }
   }
 
@@ -483,27 +544,17 @@ class DatabaseManager {
         avgTime: newTotalTime / newCount,
       });
 
-      // Log slow queries for optimization
-      if (executionTime > 100) {
-        // Queries taking more than 100ms
-        console.warn(
-          `🐌 Slow query detected: ${queryType} took ${executionTime.toFixed(
-            2
-          )}ms`
-        );
-      }
-
-      // Periodically store performance data
+      // Periodically store performance data (10% sampling rate)
       if (Math.random() < 0.1) {
-        // 10% sampling rate
-        this.db
-          .prepare(
-            `
-          INSERT INTO query_performance (query_type, execution_time_ms, result_count)
-          VALUES (?, ?, ?)
-        `
-          )
-          .run(queryType, executionTime, resultCount || 0);
+        this.executeQuery(
+          `INSERT INTO query_performance (query_type, execution_time_ms, result_count)
+           VALUES ($1, $2, $3)`,
+          [queryType, executionTime, resultCount || 0],
+          'performance_tracking'
+        ).catch(error => {
+          // Don't let performance tracking break main functionality
+          console.warn("Performance tracking error:", error);
+        });
       }
     } catch (error) {
       // Don't let performance tracking break the main functionality
@@ -563,59 +614,49 @@ class DatabaseManager {
   }
 
   // ========================================
-  // COUPLE INFO METHODS (Original API)
+  // COUPLE INFO METHODS (Original API - Now Async)
   // ========================================
 
-  getCoupleInfo(): CoupleInfo | undefined {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getCoupleInfo(): Promise<CoupleInfo | undefined> {
     try {
-      const result = this.db
-        .prepare("SELECT * FROM couple_info LIMIT 1")
-        .get() as CoupleInfo | undefined;
-      this.trackQueryPerformance(
-        "getCoupleInfo",
-        performance.now() - startTime,
-        result ? 1 : 0
+      const result = await this.executeQuery<CoupleInfo>(
+        "SELECT * FROM couple_info ORDER BY id LIMIT 1",
+        [],
+        "getCoupleInfo"
       );
-      return result;
+      return result.rows[0];
     } catch (error) {
       console.error("Database read error:", error);
       return undefined;
     }
   }
 
-  updateCoupleInfo(data: Partial<CoupleInfo>): boolean {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async updateCoupleInfo(data: Partial<CoupleInfo>): Promise<boolean> {
     try {
-      const stmt = this.db.prepare(`
+      const setClause: string[] = [];
+      const values: any[] = [];
+      let paramCount = 1;
+
+      // Build dynamic SET clause for provided fields only
+      Object.entries(data).forEach(([key, value]) => {
+        if (value !== undefined && key !== 'id' && key !== 'created_at' && key !== 'updated_at') {
+          setClause.push(`${key} = $${paramCount}`);
+          values.push(value);
+          paramCount++;
+        }
+      });
+
+      if (setClause.length === 0) return false;
+
+      const query = `
         UPDATE couple_info 
-        SET male_name = COALESCE(?, male_name),
-            female_name = COALESCE(?, female_name),
-            love_start_date = COALESCE(?, love_start_date),
-            male_birthday = COALESCE(?, male_birthday),
-            female_birthday = COALESCE(?, female_birthday),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = 1
-      `);
+        SET ${setClause.join(', ')}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = (SELECT MIN(id) FROM couple_info)
+        RETURNING *
+      `;
 
-      const result = stmt.run(
-        data.male_name,
-        data.female_name,
-        data.love_start_date,
-        data.male_birthday,
-        data.female_birthday
-      );
-
-      this.trackQueryPerformance(
-        "updateCoupleInfo",
-        performance.now() - startTime,
-        result.changes
-      );
-      return result.changes > 0;
+      const result = await this.executeQuery(query, values, "updateCoupleInfo");
+      return result.rowCount > 0;
     } catch (error) {
       console.error("Error updating couple info:", error);
       return false;
@@ -623,15 +664,16 @@ class DatabaseManager {
   }
 
   // ========================================
-  // EVENT METHODS (Enhanced with Backward Compatibility)
+  // EVENT METHODS (Enhanced with PostgreSQL - All Async)
   // ========================================
 
   /**
-   * Get All Events - Legacy Method with Enhanced Features
+   * Get All Events - Legacy Method with Enhanced Features (Now Async)
    * Maintains backward compatibility while adding new capabilities
    */
-  getAllEvents(): Event[] {
-    return this.getFilteredEvents({}, 1000, 0).map((event) => ({
+  async getAllEvents(): Promise<Event[]> {
+    const enhancedEvents = await this.getFilteredEvents({}, 1000, 0);
+    return enhancedEvents.map((event) => ({
       id: event.id,
       title: event.title,
       date: event.date,
@@ -643,30 +685,20 @@ class DatabaseManager {
   }
 
   /**
-   * Enhanced Event Filtering with Comprehensive Query Support
-   * Implements high-performance filtering with caching
+   * Enhanced Event Filtering with Comprehensive PostgreSQL Query Support
+   * Implements high-performance filtering with caching and full-text search
    */
-  getFilteredEvents(
+  async getFilteredEvents(
     filters: EventFilters = {},
     limit: number = 20,
     offset: number = 0
-  ): EnhancedEvent[] {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  ): Promise<EnhancedEvent[]> {
     // Generate cache key from filters
-    const cacheKey = `filtered_events_${JSON.stringify(
-      filters
-    )}_${limit}_${offset}`;
+    const cacheKey = `filtered_events_${JSON.stringify(filters)}_${limit}_${offset}`;
 
     // Check cache first
     const cached = this.getCachedResult<EnhancedEvent[]>(cacheKey);
     if (cached) {
-      this.trackQueryPerformance(
-        "getFilteredEvents_cached",
-        performance.now() - startTime,
-        cached.length
-      );
       return cached;
     }
 
@@ -677,250 +709,195 @@ class DatabaseManager {
         WHERE deleted_at IS NULL
       `;
       const params: any[] = [];
+      let paramCount = 1;
 
-      // Apply filters systematically
+      // Apply filters systematically with PostgreSQL parameter syntax
       if (filters.date_from) {
-        query += ` AND date >= ?`;
+        query += ` AND date >= $${paramCount}`;
         params.push(filters.date_from);
+        paramCount++;
       }
 
       if (filters.date_to) {
-        query += ` AND date <= ?`;
+        query += ` AND date <= $${paramCount}`;
         params.push(filters.date_to);
+        paramCount++;
       }
 
       if (filters.category) {
-        query += ` AND category = ?`;
+        query += ` AND category = $${paramCount}`;
         params.push(filters.category);
+        paramCount++;
       }
 
       if (filters.priority) {
-        query += ` AND priority = ?`;
+        query += ` AND priority = $${paramCount}`;
         params.push(filters.priority);
+        paramCount++;
       }
 
       if (filters.search_term) {
-        query += ` AND search_text LIKE ?`;
-        params.push(`%${filters.search_term.trim()}%`);
+        // Use PostgreSQL's full-text search capabilities
+        query += ` AND search_vector @@ plainto_tsquery('english', $${paramCount})`;
+        params.push(filters.search_term.trim());
+        paramCount++;
       }
 
       if (filters.show_recurring === false) {
-        query += ` AND is_recurring = 0`;
+        query += ` AND is_recurring = FALSE`;
       }
 
       if (!filters.show_past) {
-        query += ` AND date >= datetime('now')`;
+        query += ` AND date >= CURRENT_TIMESTAMP`;
       }
 
       // Apply sorting and pagination
-      query += ` ORDER BY date ASC LIMIT ? OFFSET ?`;
+      query += ` ORDER BY date ASC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
       params.push(limit, offset);
 
-      const stmt = this.db.prepare(query);
-      const results = stmt.all(...params) as any[];
+      const result = await this.executeQuery<any>(query, params, "getFilteredEvents");
 
       // Parse and transform results
-      const parsedResults: EnhancedEvent[] = results.map((event) => ({
-        ...event,
-        recurring_config: event.recurring_config
-          ? JSON.parse(event.recurring_config)
-          : undefined,
-        is_recurring: Boolean(event.is_recurring),
-        is_all_day: Boolean(event.is_all_day),
-        version: event.version || 1,
-      }));
+      const parsedResults: EnhancedEvent[] = result.rows.map(this.parseEventFromDB);
 
       // Cache successful results
       this.setCachedResult(cacheKey, parsedResults);
-      this.trackQueryPerformance(
-        "getFilteredEvents",
-        performance.now() - startTime,
-        parsedResults.length
-      );
 
       return parsedResults;
     } catch (error) {
       console.error("Error fetching filtered events:", error);
-      this.trackQueryPerformance(
-        "getFilteredEvents_error",
-        performance.now() - startTime,
-        0
-      );
       return [];
     }
   }
 
   /**
-   * Get Count of Filtered Events for Pagination
+   * Get Count of Filtered Events for Pagination (Async)
    * Optimized count query without fetching actual data
    */
-  getFilteredEventsCount(filters: EventFilters = {}): number {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getFilteredEventsCount(filters: EventFilters = {}): Promise<number> {
     // Generate cache key for count query
     const cacheKey = `filtered_events_count_${JSON.stringify(filters)}`;
 
     // Check cache first
     const cached = this.getCachedResult<number>(cacheKey);
     if (cached !== null) {
-      this.trackQueryPerformance(
-        "getFilteredEventsCount_cached",
-        performance.now() - startTime,
-        1
-      );
       return cached;
     }
 
     try {
       // Build optimized COUNT query (same filter logic as getFilteredEvents)
       let query = `
-      SELECT COUNT(*) as count FROM events 
-      WHERE deleted_at IS NULL
-    `;
+        SELECT COUNT(*) as count FROM events 
+        WHERE deleted_at IS NULL
+      `;
       const params: any[] = [];
+      let paramCount = 1;
 
       // Apply same filters as getFilteredEvents
       if (filters.date_from) {
-        query += ` AND date >= ?`;
+        query += ` AND date >= $${paramCount}`;
         params.push(filters.date_from);
+        paramCount++;
       }
 
       if (filters.date_to) {
-        query += ` AND date <= ?`;
+        query += ` AND date <= $${paramCount}`;
         params.push(filters.date_to);
+        paramCount++;
       }
 
       if (filters.category) {
-        query += ` AND category = ?`;
+        query += ` AND category = $${paramCount}`;
         params.push(filters.category);
+        paramCount++;
       }
 
       if (filters.priority) {
-        query += ` AND priority = ?`;
+        query += ` AND priority = $${paramCount}`;
         params.push(filters.priority);
+        paramCount++;
       }
 
       if (filters.search_term) {
-        query += ` AND search_text LIKE ?`;
-        params.push(`%${filters.search_term.trim()}%`);
+        query += ` AND search_vector @@ plainto_tsquery('english', $${paramCount})`;
+        params.push(filters.search_term.trim());
+        paramCount++;
       }
 
       if (filters.show_recurring === false) {
-        query += ` AND is_recurring = 0`;
+        query += ` AND is_recurring = FALSE`;
       }
 
       if (!filters.show_past) {
-        query += ` AND date >= datetime('now')`;
+        query += ` AND date >= CURRENT_TIMESTAMP`;
       }
 
-      const stmt = this.db.prepare(query);
-      const result = stmt.get(...params) as { count: number };
+      const result = await this.executeQuery<{ count: string }>(
+        query, 
+        params, 
+        "getFilteredEventsCount"
+      );
 
-      const count = result.count;
+      const count = parseInt(result.rows[0]?.count || '0', 10);
 
       // Cache result for 2 minutes (counts change less frequently)
       this.setCachedResult(cacheKey, count, 2 * 60 * 1000);
-      this.trackQueryPerformance(
-        "getFilteredEventsCount",
-        performance.now() - startTime,
-        1
-      );
 
       return count;
     } catch (error) {
       console.error("Error counting filtered events:", error);
-      this.trackQueryPerformance(
-        "getFilteredEventsCount_error",
-        performance.now() - startTime,
-        0
-      );
       return 0;
     }
   }
 
   /**
-   * Get Total Events Count (Unfiltered)
-   * Optimized count query for general statistics and pagination baseline
-   * Performance: Uses covering index on deleted_at for O(log n) execution
+   * Get Total Events Count (Async)
    */
-  getTotalEventsCount(): number {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
-    // Cache key for total count (changes less frequently)
+  async getTotalEventsCount(): Promise<number> {
     const cacheKey = "total_events_count";
-
-    // Check cache first (longer TTL since total rarely changes)
     const cached = this.getCachedResult<number>(cacheKey);
     if (cached !== null) {
-      this.trackQueryPerformance(
-        "getTotalEventsCount_cached",
-        performance.now() - startTime,
-        1
-      );
       return cached;
     }
 
     try {
-      // Optimized COUNT query using indexed WHERE clause
-      const result = this.db
-        .prepare(
-          `
-      SELECT COUNT(*) as count 
-      FROM events 
-      WHERE deleted_at IS NULL
-    `
-        )
-        .get() as { count: number };
-
-      const totalCount = result.count;
-
-      // Cache for 5 minutes (total count changes infrequently)
-      this.setCachedResult(cacheKey, totalCount, 5 * 60 * 1000);
-      this.trackQueryPerformance(
-        "getTotalEventsCount",
-        performance.now() - startTime,
-        1
+      const result = await this.executeQuery<{ count: string }>(
+        "SELECT COUNT(*) as count FROM events WHERE deleted_at IS NULL",
+        [],
+        "getTotalEventsCount"
       );
 
+      const totalCount = parseInt(result.rows[0]?.count || '0', 10);
+      this.setCachedResult(cacheKey, totalCount, 5 * 60 * 1000);
       return totalCount;
     } catch (error) {
       console.error("Error getting total events count:", error);
-      this.trackQueryPerformance(
-        "getTotalEventsCount_error",
-        performance.now() - startTime,
-        0
-      );
       return 0;
     }
   }
 
   /**
-   * Get Upcoming Events with Enhanced Intelligence
-   * Optimized query for dashboard and notification systems
+   * Get Upcoming Events with Enhanced Intelligence (Async)
    */
-  getUpcomingEvents(limit: number = 5, offset: number = 0): Event[] {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getUpcomingEvents(limit: number = 5, offset: number = 0): Promise<Event[]> {
     try {
-      const today = new Date().toISOString().split("T")[0];
-      const results = this.db
-        .prepare(
-          `
+      const query = `
         SELECT * FROM events 
-        WHERE deleted_at IS NULL AND date >= ? 
+        WHERE deleted_at IS NULL AND date >= CURRENT_DATE
         ORDER BY 
-          CASE WHEN date = ? THEN 0 ELSE 1 END,  -- Today's events first
-          priority = 'high' DESC,               -- High priority events next
+          CASE WHEN date::date = CURRENT_DATE THEN 0 ELSE 1 END,  -- Today's events first
+          CASE WHEN priority = 'high' THEN 0 WHEN priority = 'medium' THEN 1 ELSE 2 END,  -- Priority order
           date ASC 
-        LIMIT ? OFFSET ?
-      `
-        )
-        .all(today, today, limit, offset) as any[];
+        LIMIT $1 OFFSET $2
+      `;
 
-      const transformedResults = results.map((event) => ({
+      const result = await this.executeQuery<any>(
+        query,
+        [limit, offset],
+        "getUpcomingEvents"
+      );
+
+      return result.rows.map((event) => ({
         id: event.id,
         title: event.title,
         date: event.date,
@@ -929,13 +906,6 @@ class DatabaseManager {
         created_at: event.created_at,
         updated_at: event.updated_at,
       }));
-
-      this.trackQueryPerformance(
-        "getUpcomingEvents",
-        performance.now() - startTime,
-        transformedResults.length
-      );
-      return transformedResults;
     } catch (error) {
       console.error("Database read error:", error);
       return [];
@@ -943,325 +913,160 @@ class DatabaseManager {
   }
 
   /**
-   * Get Upcoming Events Count (Date-Filtered Count Query)
-   * Optimized for dashboard statistics and pagination of future events
-   *
-   * Performance Characteristics:
-   * - Utilizes composite index: idx_events_upcoming (date, is_recurring, priority)
-   * - Query complexity: O(log n) due to indexed date comparison
-   * - Cache TTL: 2 minutes (upcoming count changes more frequently than total)
+   * Get Upcoming Events Count (Async)
    */
-  getUpcomingEventsCount(): number {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
-    // Cache key with temporal context for debugging
+  async getUpcomingEventsCount(): Promise<number> {
     const cacheKey = "upcoming_events_count";
-
-    // Priority cache lookup (upcoming events change frequently)
     const cached = this.getCachedResult<number>(cacheKey);
     if (cached !== null) {
-      this.trackQueryPerformance(
-        "getUpcomingEventsCount_cached",
-        performance.now() - startTime,
-        1
-      );
       return cached;
     }
 
     try {
-      // Current date boundary calculation
-      const today = new Date().toISOString().split("T")[0];
-
-      // Optimized COUNT query leveraging covering index
-      // Uses idx_events_upcoming: (date, is_recurring, priority) WHERE deleted_at IS NULL
-      const result = this.db
-        .prepare(
-          `
-      SELECT COUNT(*) as count 
-      FROM events 
-      WHERE deleted_at IS NULL AND date >= ?
-    `
-        )
-        .get(today) as { count: number };
-
-      const upcomingCount = result.count;
-
-      // Shorter cache TTL (2 minutes) since upcoming events change as time progresses
-      this.setCachedResult(cacheKey, upcomingCount, 2 * 60 * 1000);
-      this.trackQueryPerformance(
-        "getUpcomingEventsCount",
-        performance.now() - startTime,
-        1
+      const result = await this.executeQuery<{ count: string }>(
+        "SELECT COUNT(*) as count FROM events WHERE deleted_at IS NULL AND date >= CURRENT_TIMESTAMP",
+        [],
+        "getUpcomingEventsCount"
       );
 
+      const upcomingCount = parseInt(result.rows[0]?.count || '0', 10);
+      this.setCachedResult(cacheKey, upcomingCount, 2 * 60 * 1000);
       return upcomingCount;
     } catch (error) {
       console.error("Error counting upcoming events:", error);
-      this.trackQueryPerformance(
-        "getUpcomingEventsCount_error",
-        performance.now() - startTime,
-        0
-      );
       return 0;
     }
   }
 
   /**
-   * Get Past Events Count (Historical Events Analysis)
-   *
-   * Performance Characteristics:
-   * - Utilizes B-tree index scan on date column with reverse boundary condition
-   * - Query complexity: O(log n) due to indexed date comparison (date < today)
-   * - Memory overhead: Minimal scalar result caching
-   *
-   * Index Strategy: Leverages idx_events_date for optimal range scan performance
+   * Get Past Events Count (Async)
    */
-  getPastEventsCount(): number {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getPastEventsCount(): Promise<number> {
     const cacheKey = "past_events_count";
-
-    // Cache lookup with performance tracking
     const cached = this.getCachedResult<number>(cacheKey);
     if (cached !== null) {
-      this.trackQueryPerformance(
-        "getPastEventsCount_cached",
-        performance.now() - startTime,
-        1
-      );
       return cached;
     }
 
     try {
-      // Date boundary calculation - ISO format for consistent comparison
-      const today = new Date().toISOString().split("T")[0];
-
-      // Optimized COUNT query using date index with reverse range scan
-      // SQL execution plan: Index Range Scan (date < boundary) + COUNT aggregation
-      const result = this.db
-        .prepare(
-          `
-      SELECT COUNT(*) as count 
-      FROM events 
-      WHERE deleted_at IS NULL AND date < ?
-    `
-        )
-        .get(today) as { count: number };
-
-      const pastCount = result.count;
-
-      // Extended cache TTL (10 minutes) - past events are immutable once date passes
-      this.setCachedResult(cacheKey, pastCount, 10 * 60 * 1000);
-      this.trackQueryPerformance(
-        "getPastEventsCount",
-        performance.now() - startTime,
-        1
+      const result = await this.executeQuery<{ count: string }>(
+        "SELECT COUNT(*) as count FROM events WHERE deleted_at IS NULL AND date < CURRENT_TIMESTAMP",
+        [],
+        "getPastEventsCount"
       );
 
+      const pastCount = parseInt(result.rows[0]?.count || '0', 10);
+      this.setCachedResult(cacheKey, pastCount, 10 * 60 * 1000);
       return pastCount;
     } catch (error) {
       console.error("Error counting past events:", error);
-      this.trackQueryPerformance(
-        "getPastEventsCount_error",
-        performance.now() - startTime,
-        0
-      );
       return 0;
     }
   }
 
   /**
-   * Get Recurring Events Count (Pattern-Based Event Analysis)
-   *
-   * Performance Characteristics:
-   * - Utilizes covering index on is_recurring column for direct boolean lookup
-   * - Query complexity: O(log n) with boolean index scan
-   * - Stable dataset: Recurring flag rarely changes after event creation
-   *
-   * Index Strategy: Uses idx_events_recurring for optimal boolean filtering
+   * Get Recurring Events Count (Async)
    */
-  getRecurringEventsCount(): number {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getRecurringEventsCount(): Promise<number> {
     const cacheKey = "recurring_events_count";
-
-    // Priority cache access - recurring events change infrequently
     const cached = this.getCachedResult<number>(cacheKey);
     if (cached !== null) {
-      this.trackQueryPerformance(
-        "getRecurringEventsCount_cached",
-        performance.now() - startTime,
-        1
-      );
       return cached;
     }
 
     try {
-      // Boolean index scan optimization
-      // SQL execution plan: Index Seek (is_recurring = 1) + COUNT aggregation
-      const result = this.db
-        .prepare(
-          `
-      SELECT COUNT(*) as count 
-      FROM events 
-      WHERE deleted_at IS NULL AND is_recurring = 1
-    `
-        )
-        .get() as { count: number };
-
-      const recurringCount = result.count;
-
-      // Long cache TTL (15 minutes) - recurring configuration is relatively stable
-      this.setCachedResult(cacheKey, recurringCount, 15 * 60 * 1000);
-      this.trackQueryPerformance(
-        "getRecurringEventsCount",
-        performance.now() - startTime,
-        1
+      const result = await this.executeQuery<{ count: string }>(
+        "SELECT COUNT(*) as count FROM events WHERE deleted_at IS NULL AND is_recurring = TRUE",
+        [],
+        "getRecurringEventsCount"
       );
 
+      const recurringCount = parseInt(result.rows[0]?.count || '0', 10);
+      this.setCachedResult(cacheKey, recurringCount, 15 * 60 * 1000);
       return recurringCount;
     } catch (error) {
       console.error("Error counting recurring events:", error);
-      this.trackQueryPerformance(
-        "getRecurringEventsCount_error",
-        performance.now() - startTime,
-        0
-      );
       return 0;
     }
   }
 
   /**
-   * Get Events This Month Count (Temporal Window Analysis)
-   *
-   * Performance Characteristics:
-   * - Complex date range query utilizing SQLite datetime functions
-   * - Query complexity: O(log n) with compound date range filtering
-   * - Dynamic temporal window: Month boundary recalculated on each execution
-   *
-   * Optimization Strategy:
-   * - Uses SQLite's optimized datetime functions for month boundary calculation
-   * - Leverages composite date index for range scan efficiency
-   * - Shorter cache TTL due to daily boundary shifts
+   * Get Events This Month Count (Async)
    */
-  getEventsThisMonthCount(): number {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getEventsThisMonthCount(): Promise<number> {
     const cacheKey = "events_this_month_count";
-
-    // Cache validation for temporal queries
     const cached = this.getCachedResult<number>(cacheKey);
     if (cached !== null) {
-      this.trackQueryPerformance(
-        "getEventsThisMonthCount_cached",
-        performance.now() - startTime,
-        1
-      );
       return cached;
     }
 
     try {
-      // SQLite datetime function optimization for month boundary calculations
-      // Uses built-in 'start of month' and '+1 month' modifiers for precise range
-      // SQL execution plan: Index Range Scan (date BETWEEN month_start AND month_end)
-      const result = this.db
-        .prepare(
-          `
-      SELECT COUNT(*) as count 
-      FROM events 
-      WHERE deleted_at IS NULL 
-        AND date >= datetime('now', 'start of month') 
-        AND date < datetime('now', 'start of month', '+1 month')
-    `
-        )
-        .get() as { count: number };
-
-      const thisMonthCount = result.count;
-
-      // Moderate cache TTL (5 minutes) - month boundaries shift daily at midnight
-      this.setCachedResult(cacheKey, thisMonthCount, 5 * 60 * 1000);
-      this.trackQueryPerformance(
-        "getEventsThisMonthCount",
-        performance.now() - startTime,
-        1
+      const result = await this.executeQuery<{ count: string }>(
+        `SELECT COUNT(*) as count 
+         FROM events 
+         WHERE deleted_at IS NULL 
+           AND date >= date_trunc('month', CURRENT_TIMESTAMP) 
+           AND date < date_trunc('month', CURRENT_TIMESTAMP) + interval '1 month'`,
+        [],
+        "getEventsThisMonthCount"
       );
 
+      const thisMonthCount = parseInt(result.rows[0]?.count || '0', 10);
+      this.setCachedResult(cacheKey, thisMonthCount, 5 * 60 * 1000);
       return thisMonthCount;
     } catch (error) {
       console.error("Error counting events this month:", error);
-      this.trackQueryPerformance(
-        "getEventsThisMonthCount_error",
-        performance.now() - startTime,
-        0
-      );
       return 0;
     }
   }
 
   /**
-   * Enhanced Event Statistics with Comprehensive Metrics
-   * Provides detailed analytics for dashboard displays
+   * Enhanced Event Statistics (Async)
    */
-  getEventStats(): EventStats {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getEventStats(): Promise<EventStats> {
     const cacheKey = "event_stats";
     const cached = this.getCachedResult<EventStats>(cacheKey);
     if (cached) {
-      this.trackQueryPerformance(
-        "getEventStats_cached",
-        performance.now() - startTime
-      );
       return cached;
     }
 
     try {
-      const stats = this.db
-        .prepare(
-          `
+      const statsQuery = `
         SELECT 
           COUNT(*) as total_events,
-          COUNT(CASE WHEN date >= datetime('now') AND deleted_at IS NULL THEN 1 END) as upcoming_events,
-          COUNT(CASE WHEN date < datetime('now') AND deleted_at IS NULL THEN 1 END) as past_events,
-          COUNT(CASE WHEN is_recurring = 1 AND deleted_at IS NULL THEN 1 END) as recurring_events,
-          COUNT(CASE WHEN date >= datetime('now', 'start of month') 
-                     AND date < datetime('now', 'start of month', '+1 month') 
+          COUNT(CASE WHEN date >= CURRENT_TIMESTAMP AND deleted_at IS NULL THEN 1 END) as upcoming_events,
+          COUNT(CASE WHEN date < CURRENT_TIMESTAMP AND deleted_at IS NULL THEN 1 END) as past_events,
+          COUNT(CASE WHEN is_recurring = TRUE AND deleted_at IS NULL THEN 1 END) as recurring_events,
+          COUNT(CASE WHEN date >= date_trunc('month', CURRENT_TIMESTAMP) 
+                     AND date < date_trunc('month', CURRENT_TIMESTAMP) + interval '1 month' 
                      AND deleted_at IS NULL THEN 1 END) as events_this_month
         FROM events 
         WHERE deleted_at IS NULL
-      `
-        )
-        .get() as EventStats;
+      `;
 
-      // Get next upcoming event with enhanced details
-      const nextEvent = this.db
-        .prepare(
-          `
-        SELECT * FROM events 
-        WHERE deleted_at IS NULL AND date >= datetime('now')
-        ORDER BY date ASC, priority = 'high' DESC
-        LIMIT 1
-      `
-        )
-        .get();
+      const statsResult = await this.executeQuery<any>(statsQuery, [], "getEventStats");
+      const stats = statsResult.rows[0];
 
-      const result: EventStats = {
-        ...stats,
-        next_event: nextEvent ? this.parseEventFromDB(nextEvent) : undefined,
-      };
-
-      // Cache for 1 minute (stats change frequently)
-      this.setCachedResult(cacheKey, result, 60 * 1000);
-      this.trackQueryPerformance(
-        "getEventStats",
-        performance.now() - startTime
+      // Get next upcoming event
+      const nextEventResult = await this.executeQuery<any>(
+        `SELECT * FROM events 
+         WHERE deleted_at IS NULL AND date >= CURRENT_TIMESTAMP
+         ORDER BY date ASC, CASE WHEN priority = 'high' THEN 0 WHEN priority = 'medium' THEN 1 ELSE 2 END
+         LIMIT 1`,
+        [],
+        "getNextEvent"
       );
 
+      const result: EventStats = {
+        total_events: parseInt(stats.total_events, 10),
+        upcoming_events: parseInt(stats.upcoming_events, 10),
+        past_events: parseInt(stats.past_events, 10),
+        recurring_events: parseInt(stats.recurring_events, 10),
+        events_this_month: parseInt(stats.events_this_month, 10),
+        next_event: nextEventResult.rows[0] ? this.parseEventFromDB(nextEventResult.rows[0]) : undefined,
+      };
+
+      this.setCachedResult(cacheKey, result, 60 * 1000);
       return result;
     } catch (error) {
       console.error("Error calculating event stats:", error);
@@ -1276,12 +1081,9 @@ class DatabaseManager {
   }
 
   /**
-   * Add Event - Legacy Method with Enhanced Features
-   * Maintains backward compatibility while adding audit trail
+   * Add Event - Legacy Method (Now Async)
    */
-  addEvent(
-    event: Omit<Event, "id" | "created_at" | "updated_at">
-  ): number | null {
+  async addEvent(event: Omit<Event, "id" | "created_at" | "updated_at">): Promise<number | null> {
     return this.createEnhancedEvent({
       title: event.title,
       date: event.date,
@@ -1295,10 +1097,9 @@ class DatabaseManager {
   }
 
   /**
-   * Create Enhanced Event with Comprehensive Features
-   * Implements full audit trail and validation
+   * Create Enhanced Event with PostgreSQL Transaction (Async)
    */
-  createEnhancedEvent(
+  async createEnhancedEvent(
     eventData: {
       title: string;
       date: string;
@@ -1313,99 +1114,84 @@ class DatabaseManager {
       reminder_minutes?: number;
     },
     userId?: string
-  ): number | null {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  ): Promise<number | null> {
+    const client = await this.pool.connect();
+    
     try {
-      // Begin transaction for atomic operation
-      const transaction = this.db.transaction(() => {
-        // Insert main event record
-        const stmt = this.db.prepare(`
-          INSERT INTO events (
-            title, description, date, timezone, is_all_day, location,
-            category, priority, is_recurring, recurring_config,
-            reminder_minutes, created_by, updated_by
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
+      // Begin transaction
+      await client.query('BEGIN');
 
-        const result = stmt.run(
-          eventData.title,
-          eventData.description || null,
-          eventData.date,
-          eventData.timezone || "UTC",
-          eventData.is_all_day ? 1 : 0,
-          eventData.location || null,
-          eventData.category,
-          eventData.priority,
-          eventData.is_recurring ? 1 : 0,
-          eventData.recurring_config
-            ? JSON.stringify(eventData.recurring_config)
-            : null,
-          eventData.reminder_minutes || null,
-          userId,
-          userId
+      // Insert main event record
+      const insertQuery = `
+        INSERT INTO events (
+          title, description, date, timezone, is_all_day, location,
+          category, priority, is_recurring, recurring_config,
+          reminder_minutes, created_by, updated_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING id
+      `;
+
+      const values = [
+        eventData.title,
+        eventData.description || null,
+        eventData.date,
+        eventData.timezone || "UTC",
+        eventData.is_all_day || false,
+        eventData.location || null,
+        eventData.category,
+        eventData.priority,
+        eventData.is_recurring,
+        eventData.recurring_config ? JSON.stringify(eventData.recurring_config) : null,
+        eventData.reminder_minutes || null,
+        userId,
+        userId
+      ];
+
+      const result = await client.query(insertQuery, values);
+      const eventId = result.rows[0].id;
+
+      // Create audit trail entry
+      await client.query(
+        `INSERT INTO event_history (event_id, action, new_values, changed_by)
+         VALUES ($1, 'created', $2, $3)`,
+        [eventId, JSON.stringify(eventData), userId]
+      );
+
+      // Schedule reminder if needed
+      if (eventData.reminder_minutes) {
+        const eventDate = new Date(eventData.date);
+        const reminderTime = new Date(
+          eventDate.getTime() - eventData.reminder_minutes * 60 * 1000
         );
 
-        const eventId = result.lastInsertRowid as number;
+        await client.query(
+          `INSERT INTO event_reminders (event_id, reminder_time)
+           VALUES ($1, $2)`,
+          [eventId, reminderTime.toISOString()]
+        );
+      }
 
-        // Create audit trail entry
-        this.db
-          .prepare(
-            `
-          INSERT INTO event_history (event_id, action, new_values, changed_by)
-          VALUES (?, 'created', ?, ?)
-        `
-          )
-          .run(eventId, JSON.stringify(eventData), userId);
-
-        // Schedule reminder if needed
-        if (eventData.reminder_minutes) {
-          const eventDate = new Date(eventData.date);
-          const reminderTime = new Date(
-            eventDate.getTime() - eventData.reminder_minutes * 60 * 1000
-          );
-
-          this.db
-            .prepare(
-              `
-            INSERT INTO event_reminders (event_id, reminder_time)
-            VALUES (?, ?)
-          `
-            )
-            .run(eventId, reminderTime.toISOString());
-        }
-
-        return eventId;
-      });
-
-      const eventId = transaction();
+      // Commit transaction
+      await client.query('COMMIT');
 
       // Invalidate relevant caches
       this.invalidateCache("events");
-      this.trackQueryPerformance(
-        "createEnhancedEvent",
-        performance.now() - startTime,
-        1
-      );
 
       return eventId;
     } catch (error) {
+      // Rollback on error
+      await client.query('ROLLBACK');
       console.error("Error creating enhanced event:", error);
-      this.trackQueryPerformance(
-        "createEnhancedEvent_error",
-        performance.now() - startTime,
-        0
-      );
       return null;
+    } finally {
+      client.release();
     }
   }
 
   /**
-   * Update Event with Enhanced Change Tracking
-   * Implements optimistic locking and comprehensive audit trail
+   * Update Event (Legacy Method - Now Async)
    */
-  updateEvent(id: number, event: Partial<Event>): boolean {
+  async updateEvent(id: number, event: Partial<Event>): Promise<boolean> {
     return this.updateEnhancedEvent(id, {
       title: event.title,
       date: event.date,
@@ -1414,7 +1200,10 @@ class DatabaseManager {
     });
   }
 
-  updateEnhancedEvent(
+  /**
+   * Update Enhanced Event with PostgreSQL Transaction (Async)
+   */
+  async updateEnhancedEvent(
     eventId: number,
     eventData: Partial<{
       title: string;
@@ -1430,17 +1219,24 @@ class DatabaseManager {
       reminder_minutes: number;
     }>,
     userId?: string
-  ): boolean {
-    this.ensureInitialized();
-    const startTime = performance.now();
+  ): Promise<boolean> {
+    const client = await this.pool.connect();
 
     try {
-      // Get current event for change detection
-      const currentEvent = this.db
-        .prepare("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL")
-        .get(eventId);
+      await client.query('BEGIN');
 
-      if (!currentEvent) return false;
+      // Get current event for change detection
+      const currentResult = await client.query(
+        "SELECT * FROM events WHERE id = $1 AND deleted_at IS NULL",
+        [eventId]
+      );
+
+      if (currentResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+
+      const currentEvent = currentResult.rows[0];
 
       // Track changes for audit trail
       const changes: Record<string, { old: any; new: any }> = {};
@@ -1449,6 +1245,7 @@ class DatabaseManager {
       // Build update query dynamically
       const updateFields: string[] = [];
       const updateValues: any[] = [];
+      let paramCount = 1;
 
       Object.entries(eventData).forEach(([key, value]) => {
         if (value !== undefined && currentEvent[key] !== value) {
@@ -1456,239 +1253,151 @@ class DatabaseManager {
           changedFields.push(key);
 
           if (key === "recurring_config") {
-            updateFields.push(`${key} = ?`);
+            updateFields.push(`${key} = $${paramCount}`);
             updateValues.push(value ? JSON.stringify(value) : null);
-          } else if (typeof value === "boolean") {
-            updateFields.push(`${key} = ?`);
-            updateValues.push(value ? 1 : 0);
           } else {
-            updateFields.push(`${key} = ?`);
+            updateFields.push(`${key} = $${paramCount}`);
             updateValues.push(value);
           }
+          paramCount++;
         }
       });
 
       if (updateFields.length === 0) {
-        this.trackQueryPerformance(
-          "updateEnhancedEvent_nochange",
-          performance.now() - startTime,
-          0
-        );
+        await client.query('ROLLBACK');
         return true; // No changes
       }
 
       // Add metadata fields
-      updateFields.push("updated_at = CURRENT_TIMESTAMP");
-      updateFields.push("updated_by = ?");
-      updateFields.push("version = version + 1");
+      updateFields.push(`updated_by = $${paramCount}`);
       updateValues.push(userId);
+      paramCount++;
+      
+      updateFields.push(`version = version + 1`);
       updateValues.push(eventId);
 
-      const transaction = this.db.transaction(() => {
-        // Update main event record
-        const updateQuery = `
-          UPDATE events 
-          SET ${updateFields.join(", ")}
-          WHERE id = ? AND deleted_at IS NULL
-        `;
+      // Update main event record
+      const updateQuery = `
+        UPDATE events 
+        SET ${updateFields.join(", ")}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $${paramCount} AND deleted_at IS NULL
+      `;
 
-        const result = this.db.prepare(updateQuery).run(...updateValues);
+      const updateResult = await client.query(updateQuery, updateValues);
 
-        if (result.changes === 0) return false;
-
-        // Create audit trail entry
-        this.db
-          .prepare(
-            `
-          INSERT INTO event_history (
-            event_id, action, changed_fields, old_values, new_values, changed_by
-          ) VALUES (?, 'updated', ?, ?, ?, ?)
-        `
-          )
-          .run(
-            eventId,
-            JSON.stringify(changedFields),
-            JSON.stringify(
-              Object.fromEntries(
-                Object.entries(changes).map(([k, v]) => [k, v.old])
-              )
-            ),
-            JSON.stringify(
-              Object.fromEntries(
-                Object.entries(changes).map(([k, v]) => [k, v.new])
-              )
-            ),
-            userId
-          );
-
-        return true;
-      });
-
-      const success = transaction();
-
-      if (success) {
-        this.invalidateCache("events");
+      if (updateResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return false;
       }
 
-      this.trackQueryPerformance(
-        "updateEnhancedEvent",
-        performance.now() - startTime,
-        success ? 1 : 0
+      // Create audit trail entry
+      await client.query(
+        `INSERT INTO event_history (
+          event_id, action, changed_fields, old_values, new_values, changed_by
+        ) VALUES ($1, 'updated', $2, $3, $4, $5)`,
+        [
+          eventId,
+          JSON.stringify(changedFields),
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(changes).map(([k, v]) => [k, v.old])
+            )
+          ),
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(changes).map(([k, v]) => [k, v.new])
+            )
+          ),
+          userId
+        ]
       );
-      return success;
+
+      await client.query('COMMIT');
+      this.invalidateCache("events");
+      return true;
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error("Error updating enhanced event:", error);
-      this.trackQueryPerformance(
-        "updateEnhancedEvent_error",
-        performance.now() - startTime,
-        0
-      );
       return false;
+    } finally {
+      client.release();
     }
   }
 
   /**
-   * Soft Delete Event with Recovery Option
-   * Maintains data integrity while allowing restoration
+   * Delete Event with PostgreSQL Transaction (Async)
    */
-  deleteEvent(id: number, userId?: string): boolean {
-    this.ensureInitialized();
-    const startTime = performance.now();
+  async deleteEvent(id: number, userId?: string): Promise<boolean> {
+    const client = await this.pool.connect();
 
     try {
-      const transaction = this.db.transaction(() => {
-        // Get event data for audit trail
-        const event = this.db
-          .prepare("SELECT * FROM events WHERE id = ? AND deleted_at IS NULL")
-          .get(id);
+      await client.query('BEGIN');
 
-        if (!event) return false;
+      // Get event data for audit trail
+      const eventResult = await client.query(
+        "SELECT * FROM events WHERE id = $1 AND deleted_at IS NULL",
+        [id]
+      );
 
-        // Soft delete the event
-        const result = this.db
-          .prepare(
-            `
-          UPDATE events 
-          SET deleted_at = CURRENT_TIMESTAMP, updated_by = ?, version = version + 1
-          WHERE id = ? AND deleted_at IS NULL
-        `
-          )
-          .run(userId, id);
-
-        if (result.changes === 0) return false;
-
-        // Create audit trail entry
-        this.db
-          .prepare(
-            `
-          INSERT INTO event_history (event_id, action, old_values, changed_by)
-          VALUES (?, 'deleted', ?, ?)
-        `
-          )
-          .run(id, JSON.stringify(event), userId);
-
-        // Cancel pending reminders
-        this.db
-          .prepare(
-            `
-          UPDATE event_reminders 
-          SET status = 'cancelled' 
-          WHERE event_id = ? AND status = 'pending'
-        `
-          )
-          .run(id);
-
-        return true;
-      });
-
-      const success = transaction();
-
-      if (success) {
-        this.invalidateCache("events");
+      if (eventResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return false;
       }
 
-      this.trackQueryPerformance(
-        "deleteEvent",
-        performance.now() - startTime,
-        success ? 1 : 0
+      const event = eventResult.rows[0];
+
+      // Soft delete the event
+      const deleteResult = await client.query(
+        `UPDATE events 
+         SET deleted_at = CURRENT_TIMESTAMP, updated_by = $1, version = version + 1
+         WHERE id = $2 AND deleted_at IS NULL`,
+        [userId, id]
       );
-      return success;
+
+      if (deleteResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+
+      // Create audit trail entry
+      await client.query(
+        `INSERT INTO event_history (event_id, action, old_values, changed_by)
+         VALUES ($1, 'deleted', $2, $3)`,
+        [id, JSON.stringify(event), userId]
+      );
+
+      // Cancel pending reminders
+      await client.query(
+        `UPDATE event_reminders 
+         SET status = 'cancelled' 
+         WHERE event_id = $1 AND status = 'pending'`,
+        [id]
+      );
+
+      await client.query('COMMIT');
+      this.invalidateCache("events");
+      return true;
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error("Error deleting event:", error);
-      this.trackQueryPerformance(
-        "deleteEvent_error",
-        performance.now() - startTime,
-        0
-      );
       return false;
-    }
-  }
-
-  /**
-   * Restore Soft-Deleted Event
-   * Allows recovery of accidentally deleted events
-   */
-  restoreEvent(id: number, userId?: string): boolean {
-    this.ensureInitialized();
-
-    try {
-      const transaction = this.db.transaction(() => {
-        const result = this.db
-          .prepare(
-            `
-          UPDATE events 
-          SET deleted_at = NULL, updated_by = ?, version = version + 1
-          WHERE id = ? AND deleted_at IS NOT NULL
-        `
-          )
-          .run(userId, id);
-
-        if (result.changes === 0) return false;
-
-        // Create audit trail entry
-        this.db
-          .prepare(
-            `
-          INSERT INTO event_history (event_id, action, changed_by)
-          VALUES (?, 'restored', ?)
-        `
-          )
-          .run(id, userId);
-
-        return true;
-      });
-
-      const success = transaction();
-
-      if (success) {
-        this.invalidateCache("events");
-      }
-
-      return success;
-    } catch (error) {
-      console.error("Error restoring event:", error);
-      return false;
+    } finally {
+      client.release();
     }
   }
 
   // ========================================
-  // USER METHODS (Original API)
+  // USER METHODS (Now Async)
   // ========================================
 
-  getUserByEmail(email: string): User | undefined {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getUserByEmail(email: string): Promise<User | undefined> {
     try {
-      const result = this.db
-        .prepare("SELECT * FROM users WHERE email = ?")
-        .get(email) as User | undefined;
-      this.trackQueryPerformance(
-        "getUserByEmail",
-        performance.now() - startTime,
-        result ? 1 : 0
+      const result = await this.executeQuery<User>(
+        "SELECT * FROM users WHERE email = $1",
+        [email],
+        "getUserByEmail"
       );
-      return result;
+      return result.rows[0];
     } catch (error) {
       console.error("Database read error:", error);
       return undefined;
@@ -1696,102 +1405,104 @@ class DatabaseManager {
   }
 
   // ========================================
-  // PHOTO METHODS (Original API)
+  // PHOTO METHODS (Now Async)
   // ========================================
 
-  getAllPhotos(): Photo[] {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async getAllPhotos(): Promise<Photo[]> {
     try {
-      const results = this.db
-        .prepare("SELECT * FROM photos ORDER BY upload_date DESC")
-        .all() as Photo[];
-      this.trackQueryPerformance(
-        "getAllPhotos",
-        performance.now() - startTime,
-        results.length
+      const result = await this.executeQuery<Photo>(
+        "SELECT * FROM photos ORDER BY upload_date DESC",
+        [],
+        "getAllPhotos"
       );
-      return results;
+      return result.rows;
     } catch (error) {
       console.error("Database read error:", error);
       return [];
     }
   }
 
-  addPhoto(photo: Omit<Photo, "id" | "created_at">): number | null {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async addPhoto(photo: Omit<Photo, "id" | "created_at">): Promise<number | null> {
     try {
-      const stmt = this.db.prepare(`
-        INSERT INTO photos (cloudinary_id, public_url, title, description, upload_date)
-        VALUES (?, ?, ?, ?, ?)
-      `);
-
-      const result = stmt.run(
-        photo.cloudinary_id,
-        photo.public_url,
-        photo.title,
-        photo.description,
-        photo.upload_date
+      const result = await this.executeQuery<{ id: number }>(
+        `INSERT INTO photos (cloudinary_id, public_url, title, description, upload_date)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id`,
+        [
+          photo.cloudinary_id,
+          photo.public_url,
+          photo.title,
+          photo.description,
+          photo.upload_date
+        ],
+        "addPhoto"
       );
 
-      this.trackQueryPerformance("addPhoto", performance.now() - startTime, 1);
-      return result.lastInsertRowid as number;
+      return result.rows[0]?.id || null;
     } catch (error) {
       console.error("Error adding photo:", error);
       return null;
     }
   }
 
-  updatePhoto(
+  async updatePhoto(
     id: number,
     data: { title?: string; description?: string }
-  ): boolean {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  ): Promise<boolean> {
     try {
-      const stmt = this.db.prepare(`
+      const setClause = [];
+      const values = [];
+      let paramCount = 1;
+
+      if (data.title !== undefined) {
+        setClause.push(`title = $${paramCount}`);
+        values.push(data.title);
+        paramCount++;
+      }
+
+      if (data.description !== undefined) {
+        setClause.push(`description = $${paramCount}`);
+        values.push(data.description);
+        paramCount++;
+      }
+
+      if (setClause.length === 0) return false;
+
+      values.push(id);
+      const query = `
         UPDATE photos 
-        SET title = COALESCE(?, title),
-            description = COALESCE(?, description)
-        WHERE id = ?
-      `);
+        SET ${setClause.join(', ')}
+        WHERE id = $${paramCount}
+      `;
 
-      const result = stmt.run(data.title, data.description, id);
-      this.trackQueryPerformance(
-        "updatePhoto",
-        performance.now() - startTime,
-        result.changes
-      );
-
-      return result.changes > 0;
+      const result = await this.executeQuery(query, values, "updatePhoto");
+      return result.rowCount > 0;
     } catch (error) {
       console.error("Error updating photo:", error);
       return false;
     }
   }
 
-  deletePhoto(id: number): Photo | null {
-    this.ensureInitialized();
-    const startTime = performance.now();
-
+  async deletePhoto(id: number): Promise<Photo | null> {
     try {
-      const photo = this.db
-        .prepare("SELECT * FROM photos WHERE id = ?")
-        .get(id) as Photo;
-      if (!photo) return null;
+      // Get photo first
+      const photoResult = await this.executeQuery<Photo>(
+        "SELECT * FROM photos WHERE id = $1",
+        [id],
+        "getPhoto"
+      );
+      
+      if (photoResult.rows.length === 0) return null;
+      const photo = photoResult.rows[0];
 
-      const result = this.db.prepare("DELETE FROM photos WHERE id = ?").run(id);
-      this.trackQueryPerformance(
-        "deletePhoto",
-        performance.now() - startTime,
-        result.changes
+      // Delete photo
+      const deleteResult = await this.executeQuery(
+        "DELETE FROM photos WHERE id = $1",
+        [id],
+        "deletePhoto"
       );
 
-      return result.changes > 0 ? photo : null;
+      return deleteResult.rowCount > 0 ? photo : null;
     } catch (error) {
       console.error("Error deleting photo:", error);
       return null;
@@ -1809,9 +1520,7 @@ class DatabaseManager {
   private parseEventFromDB(dbEvent: any): EnhancedEvent {
     return {
       ...dbEvent,
-      recurring_config: dbEvent.recurring_config
-        ? JSON.parse(dbEvent.recurring_config)
-        : undefined,
+      recurring_config: dbEvent.recurring_config || undefined,
       is_recurring: Boolean(dbEvent.is_recurring),
       is_all_day: Boolean(dbEvent.is_all_day),
       version: dbEvent.version || 1,
@@ -1820,7 +1529,6 @@ class DatabaseManager {
 
   /**
    * Get Performance Metrics for Monitoring
-   * Provides insights into database performance
    */
   getPerformanceMetrics(): Record<
     string,
@@ -1830,64 +1538,50 @@ class DatabaseManager {
   }
 
   /**
-   * Database Maintenance and Optimization
-   * Should be called periodically to maintain performance
+   * Database Maintenance and Optimization (Async)
    */
   async performMaintenance(): Promise<void> {
-    this.ensureInitialized();
-
     try {
-      console.log("🔧 Starting database maintenance...");
+      console.log("🔧 Starting PostgreSQL database maintenance...");
 
       // Analyze tables for query optimization
-      this.db.exec("ANALYZE events");
-      this.db.exec("ANALYZE event_history");
-      this.db.exec("ANALYZE couple_info");
-      this.db.exec("ANALYZE photos");
-      this.db.exec("ANALYZE users");
+      await this.executeQuery("ANALYZE events", [], "maintenance_analyze");
+      await this.executeQuery("ANALYZE event_history", [], "maintenance_analyze");
+      await this.executeQuery("ANALYZE couple_info", [], "maintenance_analyze");
+      await this.executeQuery("ANALYZE photos", [], "maintenance_analyze");
+      await this.executeQuery("ANALYZE users", [], "maintenance_analyze");
 
       // Clean up old performance data (keep last 30 days)
-      this.db
-        .prepare(
-          `
-        DELETE FROM query_performance 
-        WHERE executed_at < datetime('now', '-30 days')
-      `
-        )
-        .run();
+      await this.executeQuery(
+        `DELETE FROM query_performance 
+         WHERE executed_at < CURRENT_TIMESTAMP - INTERVAL '30 days'`,
+        [],
+        "maintenance_cleanup"
+      );
 
       // Clean up old audit trail (keep last 90 days)
-      this.db
-        .prepare(
-          `
-        DELETE FROM event_history 
-        WHERE changed_at < datetime('now', '-90 days')
-      `
-        )
-        .run();
+      await this.executeQuery(
+        `DELETE FROM event_history 
+         WHERE changed_at < CURRENT_TIMESTAMP - INTERVAL '90 days'`,
+        [],
+        "maintenance_cleanup"
+      );
 
       // Clear expired cache entries
       this.invalidateCache();
 
-      // Log database size information
-      const dbSize = this.db
-        .prepare(
-          `
-        SELECT page_count * page_size as size 
-        FROM pragma_page_count(), pragma_page_size()
-      `
-        )
-        .get();
-
-      console.log(
-        `📊 Database size: ${(dbSize.size / 1024 / 1024).toFixed(2)} MB`
+      // Get database size information
+      const sizeResult = await this.executeQuery<{ size: string }>(
+        `SELECT pg_size_pretty(pg_database_size(current_database())) as size`,
+        [],
+        "maintenance_stats"
       );
+
+      console.log(`📊 Database size: ${sizeResult.rows[0]?.size || 'Unknown'}`);
       console.log(`🗂️ Cache entries: ${this.queryCache.size}`);
-      console.log(
-        `📈 Performance metrics tracked: ${this.performanceMetrics.size} query types`
-      );
+      console.log(`📈 Performance metrics tracked: ${this.performanceMetrics.size} query types`);
 
-      console.log("✅ Database maintenance completed");
+      console.log("✅ PostgreSQL database maintenance completed");
     } catch (error) {
       console.error("❌ Database maintenance failed:", error);
     }
@@ -1895,14 +1589,12 @@ class DatabaseManager {
 
   /**
    * Schedule Periodic Maintenance Tasks
-   * Implements automatic optimization scheduling
    */
   private scheduleMaintenanceTasks(): void {
-    // Run maintenance every 6 hours in production
     const maintenanceInterval =
       process.env.NODE_ENV === "production"
-        ? 6 * 60 * 60 * 1000
-        : 60 * 60 * 1000;
+        ? 6 * 60 * 60 * 1000  // 6 hours in production
+        : 60 * 60 * 1000;     // 1 hour in development
 
     setInterval(() => {
       this.performMaintenance().catch((error) => {
@@ -1912,80 +1604,43 @@ class DatabaseManager {
   }
 
   /**
-   * Enhanced Default Data Seeding
-   * Sets up initial data with enhanced event features
+   * Enhanced Default Data Seeding for PostgreSQL (Async)
    */
-  private async seedDefaultData(): Promise<void> {
-    this.ensureInitialized();
-
+  private async seedDefaultData(client: PoolClient): Promise<void> {
     try {
-      const coupleCount = this.db
-        .prepare("SELECT COUNT(*) as count FROM couple_info")
-        .get() as { count: number };
-      const userCount = this.db
-        .prepare("SELECT COUNT(*) as count FROM users")
-        .get() as { count: number };
+      const coupleResult = await client.query("SELECT COUNT(*) as count FROM couple_info");
+      const userResult = await client.query("SELECT COUNT(*) as count FROM users");
 
-      if (coupleCount.count === 0) {
-        this.db
-          .prepare(
-            `
-          INSERT INTO couple_info (male_name, female_name, love_start_date, male_birthday, female_birthday)
-          VALUES (?, ?, ?, ?, ?)
-        `
-          )
-          .run("Bá An", "Kiều Trâm", "2025-1-27", "06-06", "08-12");
+      const coupleCount = parseInt(coupleResult.rows[0].count, 10);
+      const userCount = parseInt(userResult.rows[0].count, 10);
 
+      if (coupleCount === 0) {
+        await client.query(
+          `INSERT INTO couple_info (male_name, female_name, love_start_date, male_birthday, female_birthday)
+           VALUES ($1, $2, $3, $4, $5)`,
+          ["Bá An", "Kiều Trâm", "2025-01-27", "06-06", "08-12"]
+        );
         console.log("💕 Default couple information created");
       }
 
-      if (userCount.count === 0) {
+      if (userCount === 0) {
         const defaultPassword = "anandtram1206";
         const hashedPassword = await bcrypt.hash(defaultPassword, 12);
 
-        const insertUser = this.db.prepare(`
-          INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)
-        `);
-
-        insertUser.run("an@gmail.com", hashedPassword, "An");
-        insertUser.run("tram@gmail.com", hashedPassword, "Trâm");
+        await client.query(
+          `INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3)`,
+          ["an@gmail.com", hashedPassword, "An"]
+        );
+        
+        await client.query(
+          `INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3)`,
+          ["tram@gmail.com", hashedPassword, "Trâm"]
+        );
 
         console.log("👤 Default user accounts created");
 
-        // Create some sample enhanced events
-        this.createEnhancedEvent(
-          {
-            title: "Our First Anniversary",
-            date: "2025-12-27T19:00:00Z",
-            description: "Celebrating one year of love and happiness together",
-            is_recurring: true,
-            recurring_config: { frequency: "yearly", interval: 1 },
-            category: "anniversary",
-            priority: "high",
-            timezone: "Asia/Ho_Chi_Minh",
-            is_all_day: false,
-            location: "Romantic Restaurant",
-            reminder_minutes: 1440,
-          },
-          "1"
-        );
-
-        this.createEnhancedEvent(
-          {
-            title: "An's Birthday",
-            date: "2025-06-06T00:00:00Z",
-            description: "Celebrating An's special day",
-            is_recurring: true,
-            recurring_config: { frequency: "yearly", interval: 1 },
-            category: "birthday",
-            priority: "high",
-            timezone: "Asia/Ho_Chi_Minh",
-            is_all_day: true,
-            reminder_minutes: 1440,
-          },
-          "2"
-        );
-
+        // Create sample enhanced events
+        await this.createSampleEvents(client);
         console.log("🎉 Sample events created");
       }
     } catch (error) {
@@ -1994,20 +1649,77 @@ class DatabaseManager {
   }
 
   /**
-   * Safe Database Connection Closure
-   * Ensures proper cleanup and resource management
+   * Create sample events for demo purposes
    */
-  close(): void {
-    if (this.db) {
+  private async createSampleEvents(client: PoolClient): Promise<void> {
+    const sampleEvents = [
+      {
+        title: "Our First Anniversary",
+        date: "2025-12-27T19:00:00Z",
+        description: "Celebrating one year of love and happiness together",
+        is_recurring: true,
+        recurring_config: { frequency: "yearly", interval: 1 },
+        category: "anniversary",
+        priority: "high",
+        timezone: "Asia/Ho_Chi_Minh",
+        is_all_day: false,
+        location: "Romantic Restaurant",
+        reminder_minutes: 1440,
+      },
+      {
+        title: "An's Birthday",
+        date: "2025-06-06T00:00:00Z",
+        description: "Celebrating An's special day",
+        is_recurring: true,
+        recurring_config: { frequency: "yearly", interval: 1 },
+        category: "birthday",
+        priority: "high",
+        timezone: "Asia/Ho_Chi_Minh",
+        is_all_day: true,
+        reminder_minutes: 1440,
+      }
+    ];
+
+    for (const eventData of sampleEvents) {
+      await client.query(
+        `INSERT INTO events (
+          title, description, date, timezone, is_all_day, location,
+          category, priority, is_recurring, recurring_config,
+          reminder_minutes, created_by, updated_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          eventData.title,
+          eventData.description,
+          eventData.date,
+          eventData.timezone,
+          eventData.is_all_day,
+          eventData.location,
+          eventData.category,
+          eventData.priority,
+          eventData.is_recurring,
+          JSON.stringify(eventData.recurring_config),
+          eventData.reminder_minutes,
+          "1", // created_by
+          "1"  // updated_by
+        ]
+      );
+    }
+  }
+
+  /**
+   * Safe Database Connection Closure
+   */
+  async close(): Promise<void> {
+    if (this.pool) {
       try {
         // Clear all caches
         this.invalidateCache();
 
-        // Close database connection
-        this.db.close();
-        console.log("🔒 Database connection closed");
+        // Close connection pool
+        await this.pool.end();
+        console.log("🔒 PostgreSQL connection pool closed");
       } catch (error) {
-        console.error("Error closing database:", error);
+        console.error("Error closing database pool:", error);
       }
     }
     this.initialized = false;
@@ -2026,7 +1738,7 @@ let initializationPromise: Promise<DatabaseManager> | null = null;
  * Implements robust initialization with retry mechanisms
  */
 export async function getDatabase(): Promise<DatabaseManager> {
-  if (dbInstance && dbInstance["initialized"]) {
+  if (dbInstance && dbInstance['initialized']) {
     return dbInstance;
   }
 
@@ -2058,7 +1770,7 @@ export async function getDatabase(): Promise<DatabaseManager> {
           dbInstance = null;
           initializationPromise = null;
           throw new Error(
-            `Database initialization failed after ${maxRetries} attempts. Check server environment and permissions.`
+            `Database initialization failed after ${maxRetries} attempts. Check PostgreSQL connection and environment variables.`
           );
         }
 
@@ -2077,20 +1789,24 @@ export async function getDatabase(): Promise<DatabaseManager> {
 
 /**
  * Enhanced Database Connection Cleanup
- * Provides graceful shutdown capabilities
  */
-export function closeDatabaseConnection(): void {
+export async function closeDatabaseConnection(): Promise<void> {
   if (dbInstance) {
-    dbInstance.close();
+    await dbInstance.close();
     dbInstance = null;
     initializationPromise = null;
     console.log("🧹 Database connection cleanup completed");
+  }
+  
+  // Close global pool if exists
+  if (pool) {
+    await pool.end();
+    pool = null;
   }
 }
 
 /**
  * Get Database Performance Metrics
- * Utility function for monitoring and debugging
  */
 export async function getDatabaseMetrics(): Promise<Record<string, any>> {
   try {
@@ -2104,7 +1820,6 @@ export async function getDatabaseMetrics(): Promise<Record<string, any>> {
 
 /**
  * Force Database Maintenance
- * Utility function for manual maintenance triggers
  */
 export async function performDatabaseMaintenance(): Promise<void> {
   try {

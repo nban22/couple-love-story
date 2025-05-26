@@ -61,7 +61,7 @@ export const authOptions: NextAuthOptions = {
 
         try {
           const db = await getDatabase();
-          const user = db.getUserByEmail(credentials.email.toLowerCase().trim());
+          const user = await db.getUserByEmail(credentials.email.toLowerCase().trim());
           
           // Always perform bcrypt comparison to prevent timing attacks
           const dummyHash = '$2a$12$dummy.hash.to.prevent.timing.attacks.and.user.enumeration';

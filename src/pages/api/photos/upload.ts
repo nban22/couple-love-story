@@ -82,7 +82,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Database storage with transaction-like error handling
     const db = await getDatabase();
-    const photoId = db.addPhoto({
+    const photoId = await db.addPhoto({
       cloudinary_id: uploadResult.data!.cloudinary_id,
       public_url: uploadResult.data!.public_url,
       title: req.body.title || file.originalname,

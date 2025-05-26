@@ -79,7 +79,7 @@ export default async function handler(
          * Public read endpoint - optimized for performance
          * Fix: Database methods remain synchronous after initialization
          */
-        const coupleInfo = db.getCoupleInfo();
+        const coupleInfo = await db.getCoupleInfo();
         
         if (!coupleInfo) {
           return res.status(404).json({
@@ -119,7 +119,7 @@ export default async function handler(
         }
 
         // Database update operation with error handling
-        const updateSuccess = db.updateCoupleInfo(updateData);
+        const updateSuccess = await db.updateCoupleInfo(updateData);
         
         if (!updateSuccess) {
           return res.status(500).json({
@@ -129,7 +129,7 @@ export default async function handler(
         }
 
         // Return synchronized data for client state management
-        const updatedInfo = db.getCoupleInfo();
+        const updatedInfo = await db.getCoupleInfo();
         
         if (!updatedInfo) {
           return res.status(500).json({

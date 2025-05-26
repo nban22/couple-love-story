@@ -43,5 +43,3 @@ next-env.d.ts
 .export-ignore
 # export files
 export.md
-
-/src/data

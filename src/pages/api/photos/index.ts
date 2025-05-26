@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const db = await getDatabase();
-    const photos = db.getAllPhotos();
+    const photos = await db.getAllPhotos();
     
     // Performance optimization: Transform URLs for responsive images
     const optimizedPhotos = photos.map(photo => ({

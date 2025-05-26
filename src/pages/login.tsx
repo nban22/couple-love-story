@@ -58,7 +58,9 @@ export default function LoginPage() {
         // Validate callback URL to prevent open redirect attacks
         const isValidCallback = callbackUrl.startsWith('/') && !callbackUrl.startsWith('//');
 
-        await router.push(isValidCallback ? callbackUrl : '/');
+        if (isValidCallback && router.asPath !== callbackUrl) {
+          await router.replace(callbackUrl);
+        }
       }
     } catch (error) {
       console.error('Login error:', error);

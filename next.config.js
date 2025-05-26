@@ -41,13 +41,15 @@ const nextConfig = {
     ];
   },
 
-  // FIXED WEBPACK CONFIGURATION
+  // UPDATED WEBPACK CONFIGURATION FOR POSTGRESQL
   webpack: (config, { isServer, webpack }) => {
     // 1. Server-side: externalize client-only packages
     if (isServer) {
       config.externals = [
         ...config.externals,
-        "better-sqlite3",
+        // CHANGED: Replace better-sqlite3 with pg
+        "pg",
+        "pg-native", // PostgreSQL native bindings
         "bcryptjs",
         "multer",
         // CRITICAL: Externalize client-only libraries completely
@@ -56,7 +58,7 @@ const nextConfig = {
       ];
     }
 
-    // 2. Client-side: provide self polyfill
+    // 2. Client-side: provide self polyfill and disable Node.js modules
     if (!isServer) {
       config.plugins.push(
         new webpack.DefinePlugin({
@@ -73,6 +75,12 @@ const nextConfig = {
         crypto: false,
         path: false,
         os: false,
+        // PostgreSQL specific fallbacks
+        dns: false,
+        stream: false,
+        util: false,
+        buffer: false,
+        events: false,
       };
     }
 
@@ -82,10 +90,10 @@ const nextConfig = {
       cacheGroups: {
         default: false,
         vendors: false,
-        // Server-only vendor
+        // Server-only vendor - UPDATED for PostgreSQL
         ...(isServer && {
           serverVendor: {
-            test: /[\\/]node_modules[\\/](better-sqlite3|bcryptjs|multer)/,
+            test: /[\\/]node_modules[\\/](pg|pg-native|bcryptjs|multer)/,
             name: "server-vendor",
             chunks: "all",
             priority: 20,
@@ -112,8 +120,8 @@ const nextConfig = {
   experimental: {
     scrollRestoration: true,
     esmExternals: "loose",
-    // IMPORTANT: Specify server-only packages
-    serverComponentsExternalPackages: ["better-sqlite3", "bcryptjs", "multer"],
+    // UPDATED: Specify PostgreSQL server-only packages
+    serverComponentsExternalPackages: ["pg", "pg-native", "bcryptjs", "multer"],
   },
 
   // 6. Transpile client-only packages properly

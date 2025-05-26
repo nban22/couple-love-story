@@ -144,7 +144,7 @@ export default async function handler(
     const db = await getDatabase();
     
     // Atomic existence check to prevent race conditions
-    const existingPhotos = db.getAllPhotos();
+    const existingPhotos = await db.getAllPhotos();
     const existingPhoto = existingPhotos.find(p => p.id === photoId);
     
     if (!existingPhoto) {
@@ -166,7 +166,7 @@ export default async function handler(
     }
 
     // Database update operation with prepared statement execution
-    const updateSuccess = db.updatePhoto(photoId, sanitizedData);
+    const updateSuccess = await db.updatePhoto(photoId, sanitizedData);
     
     if (!updateSuccess) {
       return res.status(500).json({
@@ -176,7 +176,7 @@ export default async function handler(
     }
 
     // Retrieve updated record for response consistency
-    const updatedPhotos = db.getAllPhotos();
+    const updatedPhotos = await db.getAllPhotos();
     const updatedPhoto = updatedPhotos.find(p => p.id === photoId);
     
     if (!updatedPhoto) {

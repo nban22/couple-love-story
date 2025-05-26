@@ -379,22 +379,22 @@ async function handleGetEvents(
     
     if (upcoming === 'true') {
       // Optimized query for upcoming events only
-      events = db.getUpcomingEvents(perPage, offset);
-      totalCount = db.getUpcomingEventsCount();
+      events = await db.getUpcomingEvents(perPage, offset);
+      totalCount = await db.getUpcomingEventsCount();
     } else {
       // Full event query with filters
-      events = db.getFilteredEvents(filters, perPage, offset);
-      totalCount = db.getFilteredEventsCount(filters);
+      events = await db.getFilteredEvents(filters, perPage, offset);
+      totalCount = await db.getFilteredEventsCount(filters);
     }
     
     // Generate statistics if requested
     if (include_stats === 'true') {
       stats = {
-        total_events: db.getTotalEventsCount(),
-        upcoming_events: db.getUpcomingEventsCount(),
-        past_events: db.getPastEventsCount(),
-        recurring_events: db.getRecurringEventsCount(),
-        events_this_month: db.getEventsThisMonthCount()
+        total_events: await db.getTotalEventsCount(),
+        upcoming_events: await db.getUpcomingEventsCount(),
+        past_events: await db.getPastEventsCount(),
+        recurring_events: await db.getRecurringEventsCount(),
+        events_this_month: await db.getEventsThisMonthCount()
       };
     }
     
@@ -457,7 +457,7 @@ async function handleCreateEvent(
       // Begin transaction (pseudo-code - implement based on your DB adapter)
       // await db.beginTransaction();
       
-      eventId = db.addEvent({
+      eventId = await db.addEvent({
         ...sanitizedData,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()

@@ -585,11 +585,18 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
 export const getServerSideProps: GetServerSideProps = async (context) => {
   try {
     const db = await getDatabase();
-    const photos = db.getAllPhotos();
+    const photos = await db.getAllPhotos();
 
-    // Add thumbnail URLs for responsive images
-    const photosWithThumbnails = photos.map((photo: Photo) => ({
+    // Add thumbnail URLs for responsive images AND serialize dates
+    const photosWithThumbnails = (photos as Photo[]).map((photo: Photo) => ({
       ...photo,
+      // Critical: Convert Date objects to ISO strings for JSON serialization
+      upload_date: (photo.upload_date && typeof photo.upload_date === 'object' && (photo.upload_date as any) instanceof Date)
+        ? (photo.upload_date as Date).toISOString()
+        : photo.upload_date,
+      created_at: (photo as any).created_at && typeof (photo as any).created_at === 'object' && (photo as any).created_at instanceof Date
+        ? ((photo as any).created_at as Date).toISOString()
+        : (photo as any).created_at,
       thumbnails: {
         small: photo.public_url.replace('/upload/', '/upload/w_300,h_200,c_fill,q_auto:low/'),
         medium: photo.public_url.replace('/upload/', '/upload/w_600,h_400,c_fill,q_auto:good/'),

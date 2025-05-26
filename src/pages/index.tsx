@@ -123,9 +123,49 @@ export default function HomePage({ coupleInfo, upcomingEvents, featuredPhotos }:
 }
 
 /**
- * Server-side data fetching with error boundary protection
+ * Data Serialization Utility Functions
+ * Purpose: Convert PostgreSQL Date objects to JSON-serializable strings
+ * Technical: Ensures Next.js SSR compatibility by handling Date serialization
+ */
+
+/**
+ * Recursively serialize Date objects to ISO strings
+ * @param obj - Object potentially containing Date instances
+ * @returns Object with Date objects converted to ISO strings
+ */
+function serializeDates(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  
+  // Handle Date objects - convert to ISO string for JSON serialization
+  if (obj instanceof Date) {
+    return obj.toISOString();
+  }
+  
+  // Handle arrays - recursively process each element
+  if (Array.isArray(obj)) {
+    return obj.map(serializeDates);
+  }
+  
+  // Handle objects - recursively process each property
+  if (typeof obj === 'object') {
+    const serialized: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      serialized[key] = serializeDates(value);
+    }
+    return serialized;
+  }
+  
+  // Primitive types pass through unchanged
+  return obj;
+}
+
+/**
+ * Server-side data fetching with proper serialization
  * Performance optimization: Single database connection serves multiple queries
- * Error handling: Graceful degradation if database is unavailable
+ * Error handling: Graceful degradation with comprehensive error boundary
+ * Data integrity: Ensures all Date objects are serialized for client transfer
  */
 export const getServerSideProps: GetServerSideProps = async (context) => {
   try {
@@ -133,28 +173,43 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     const db = await getDatabase();
 
     // Parallel data fetching for optimal performance
+    // Note: Removed Promise.resolve() wrapper since methods are now async
     const [coupleInfo, upcomingEvents, allPhotos] = await Promise.all([
-      Promise.resolve(db.getCoupleInfo()),
-      Promise.resolve(db.getUpcomingEvents(3)),
-      Promise.resolve(db.getAllPhotos()),
+      db.getCoupleInfo(),
+      db.getUpcomingEvents(3),
+      db.getAllPhotos(),
     ]);
 
     // Featured photos selection: Most recent 6 photos
+    // Sort by upload_date (handling potential Date objects)
     const featuredPhotos = allPhotos
-      .sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())
+      .sort((a, b) => {
+        const dateA = (typeof a.upload_date === 'object' && a.upload_date !== null && 'getTime' in a.upload_date)
+          ? a.upload_date
+          : new Date(a.upload_date);
+        const dateB = (typeof b.upload_date === 'object' && b.upload_date !== null && 'getTime' in b.upload_date)
+          ? b.upload_date
+          : new Date(b.upload_date);
+        return dateB.getTime() - dateA.getTime();
+      })
       .slice(0, 6);
 
+    // Critical: Serialize all data to ensure JSON compatibility
+    // This step converts PostgreSQL Date objects to ISO strings
+    const serializedProps = {
+      coupleInfo: serializeDates(coupleInfo || null),
+      upcomingEvents: serializeDates(upcomingEvents || []),
+      featuredPhotos: serializeDates(featuredPhotos || []),
+    };
+
     return {
-      props: {
-        coupleInfo: coupleInfo || null,
-        upcomingEvents: upcomingEvents || [],
-        featuredPhotos: featuredPhotos || [],
-      },
+      props: serializedProps,
     };
   } catch (error) {
     console.error('Homepage SSR error:', error);
 
     // Graceful fallback with empty data
+    // Maintains application stability during database connectivity issues
     return {
       props: {
         coupleInfo: null,
