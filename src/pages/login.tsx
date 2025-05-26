@@ -20,44 +20,44 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  
+
   // Secure form submission with comprehensive error handling
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Client-side validation before API call
     if (!email.trim() || !password.trim()) {
       toast.error('Please fill in all fields');
       return;
     }
-    
+
     // Email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       toast.error('Please enter a valid email address');
       return;
     }
-    
+
     setIsLoading(true);
-    
+
     try {
       const result = await signIn('credentials', {
         email: email.toLowerCase().trim(), // Normalize email input
         password,
         redirect: false, // Handle redirect manually for better UX
       });
-      
+
       if (result?.error) {
         // Generic error message to prevent user enumeration
         toast.error('Invalid credentials. Please try again.');
       } else if (result?.ok) {
         toast.success('Login successful! Redirecting...');
-        
+
         // Secure redirect with fallback
         const callbackUrl = (router.query.callbackUrl as string) || '/';
         // Validate callback URL to prevent open redirect attacks
         const isValidCallback = callbackUrl.startsWith('/') && !callbackUrl.startsWith('//');
-        
+
         await router.push(isValidCallback ? callbackUrl : '/');
       }
     } catch (error) {
@@ -87,7 +87,7 @@ export default function LoginPage() {
               Sign in to your love story
             </p>
           </div>
-          
+
           {/* Login form with accessibility attributes */}
           <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
             <div className="space-y-4">
@@ -108,7 +108,7 @@ export default function LoginPage() {
                   placeholder="Enter your email"
                 />
               </div>
-              
+
               <div>
                 <label htmlFor="password" className="block text-sm font-medium text-gray-700">
                   Password
@@ -148,12 +148,10 @@ export default function LoginPage() {
                 )}
               </button>
             </div>
-            
-            {/* Helper text for demo purposes */}
+
             <div className="text-center">
-              <p className="text-xs text-gray-500">
-                Demo accounts: couple1@love.story / couple2@love.story<br />
-                Password: LoveStory123!
+              <p className="text-xs text-pink-500">
+                💌 Psst... Love is in the air! Enter your details to continue your story together. 💑
               </p>
             </div>
           </form>
@@ -169,7 +167,7 @@ export default function LoginPage() {
  */
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const session = await getServerSession(context.req, context.res, authOptions);
-  
+
   if (session) {
     return {
       redirect: {
@@ -178,7 +176,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       },
     };
   }
-  
+
   return {
     props: {},
   };

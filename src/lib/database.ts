@@ -243,8 +243,8 @@ class DatabaseManager {
           love_start_date TEXT NOT NULL,
           male_birthday TEXT NOT NULL,
           female_birthday TEXT NOT NULL,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
         );
 
         CREATE TABLE IF NOT EXISTS users (
@@ -252,7 +252,7 @@ class DatabaseManager {
           email TEXT UNIQUE NOT NULL,
           password_hash TEXT NOT NULL,
           name TEXT NOT NULL,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+          created_at TEXT DEFAULT (datetime('now'))
         );
 
         CREATE TABLE IF NOT EXISTS photos (
@@ -262,7 +262,7 @@ class DatabaseManager {
           title TEXT,
           description TEXT,
           upload_date TEXT NOT NULL,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+          created_at TEXT DEFAULT (datetime('now'))
         );
 
         -- Enhanced events table with comprehensive features
@@ -287,8 +287,8 @@ class DatabaseManager {
           reminder_minutes INTEGER,
           
           -- Audit trail and versioning
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
           created_by TEXT,
           updated_by TEXT,
           version INTEGER DEFAULT 1,
@@ -325,7 +325,7 @@ class DatabaseManager {
           delivery_method TEXT DEFAULT 'browser' CHECK (delivery_method IN ('browser', 'email', 'push')),
           retry_count INTEGER DEFAULT 0,
           last_attempt TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          created_at TEXT DEFAULT (datetime('now')),
           FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
         );
 
@@ -374,7 +374,7 @@ class DatabaseManager {
         CREATE INDEX IF NOT EXISTS idx_events_date_category ON events(date, category) WHERE deleted_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_events_date_priority ON events(date, priority) WHERE deleted_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_events_upcoming ON events(date, is_recurring, priority) 
-          WHERE deleted_at IS NULL AND date >= datetime('now');
+                WHERE deleted_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_events_user_date ON events(created_by, date) WHERE deleted_at IS NULL;
         
         -- Full-text search optimization

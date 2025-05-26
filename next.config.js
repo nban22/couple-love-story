@@ -119,7 +119,7 @@ const nextConfig = {
   // 6. Transpile client-only packages properly
   transpilePackages: ["react-toastify", "react-masonry-css"],
 
-  output: "standalone",
+  // output: "standalone",
 };
 
 module.exports = nextConfig;
