@@ -16,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const db = getDatabase();
+    const db = await getDatabase();
 
     switch (req.method) {
       case 'PUT':

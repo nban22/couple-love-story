@@ -26,7 +26,8 @@ export default function Document() {
         {/* Progressive Web App configuration */}
         <link rel="manifest" href="/manifest.json" />
         <link rel="apple-touch-icon" href="/icon-192x192.png" />
-        
+        {/* Web icon (favicon) */}
+        <link rel="icon" type="image/x-icon" href="/favicon.ico" />
         {/* Theme color for mobile browsers */}
         <meta name="theme-color" content="#ec4899" />
         

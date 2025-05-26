@@ -1,8 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../lib/auth';
-import { getDatabase } from '../../../lib/database';
-import { deleteFromCloudinary, uploadToCloudinary } from '../../../lib/cloudinary';
+import { authOptions } from '@/lib/auth';
+import { getDatabase } from '@/lib/database';
+import { deleteFromCloudinary, uploadToCloudinary } from "@/lib/cloudinary";
 import multer from 'multer';
 import { promisify } from 'util';
 
@@ -81,7 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Database storage with transaction-like error handling
-    const db = getDatabase();
+    const db = await getDatabase();
     const photoId = db.addPhoto({
       cloudinary_id: uploadResult.data!.cloudinary_id,
       public_url: uploadResult.data!.public_url,

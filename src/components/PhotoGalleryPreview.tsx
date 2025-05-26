@@ -50,7 +50,7 @@ const PhotoGalleryPreview = memo<PhotoGalleryPreviewProps>(({ photos, maxPhotos 
               placeholder="blur"
               blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
             />
-            
+
             {/* Hover overlay with photo info */}
             <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-300 flex items-end">
               <div className="p-3 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300">
@@ -68,12 +68,12 @@ const PhotoGalleryPreview = memo<PhotoGalleryPreviewProps>(({ photos, maxPhotos 
 
       {/* Modal for photo preview with optimized image loading */}
       {selectedPhoto && (
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
           onClick={() => setSelectedPhoto(null)}
         >
-          <div 
-            className="relative max-w-4xl max-h-[90vh] bg-white rounded-lg overflow-hidden"
+          <div
+            className="relative max-w-4xl w-full max-h-[90vh] bg-white rounded-lg overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Close button */}
@@ -86,19 +86,21 @@ const PhotoGalleryPreview = memo<PhotoGalleryPreviewProps>(({ photos, maxPhotos 
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
-            
+
             {/* High-resolution image display */}
-            <div className="relative aspect-video">
+            <div className="relative w-full">
               <Image
                 src={selectedPhoto.thumbnails?.large || selectedPhoto.public_url}
                 alt={selectedPhoto.title || 'Photo'}
-                fill
+                width={1200}
+                height={0}
+                style={{ width: '100%', height: 'auto' }}
                 className="object-contain"
                 sizes="(max-width: 1200px) 100vw, 1200px"
                 priority // Load modal images with high priority
               />
             </div>
-            
+
             {/* Photo metadata */}
             {(selectedPhoto.title || selectedPhoto.description) && (
               <div className="p-6 bg-white">

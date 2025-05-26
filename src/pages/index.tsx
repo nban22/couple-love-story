@@ -9,6 +9,7 @@ import CoupleInfoDisplay from '../components/CoupleInfoDisplay';
 import EventCard from '../components/EventCard';
 import PhotoGalleryPreview from '../components/PhotoGalleryPreview';
 import { useMemo } from 'react';
+import NavHeader from '@/components/NavHeader';
 
 /**
  * Homepage component implementing Server-Side Rendering for optimal SEO
@@ -44,41 +45,7 @@ export default function HomePage({ coupleInfo, upcomingEvents, featuredPhotos }:
       </Head>
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
-        {/* Navigation header with conditional authentication UI */}
-        <nav className="flex justify-between items-center mb-8 bg-white/70 backdrop-blur-sm rounded-xl p-4 shadow-sm">
-          <div className="flex space-x-6">
-            <Link href="/" className="font-semibold text-pink-600 hover:text-pink-700 transition-colors">
-              Home
-            </Link>
-            <Link href="/events" className="text-gray-600 hover:text-pink-600 transition-colors">
-              Events
-            </Link>
-            <Link href="/gallery" className="text-gray-600 hover:text-pink-600 transition-colors">
-              Gallery
-            </Link>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            {session ? (
-              <>
-                <span className="text-sm text-gray-600">Welcome, {session.user?.name}</span>
-                <Link
-                  href="/api/auth/signout"
-                  className="text-sm bg-pink-100 text-pink-600 px-3 py-1 rounded-lg hover:bg-pink-200 transition-colors"
-                >
-                  Sign Out
-                </Link>
-              </>
-            ) : (
-              <Link
-                href="/login"
-                className="text-sm bg-pink-500 text-white px-4 py-2 rounded-lg hover:bg-pink-600 transition-colors"
-              >
-                Sign In
-              </Link>
-            )}
-          </div>
-        </nav>
+        <NavHeader session={session} />
 
         {/* Main content sections with responsive grid layout */}
         <main className="space-y-12">
@@ -163,7 +130,7 @@ export default function HomePage({ coupleInfo, upcomingEvents, featuredPhotos }:
 export const getServerSideProps: GetServerSideProps = async (context) => {
   try {
     const session = await getServerSession(context.req, context.res, authOptions);
-    const db = getDatabase();
+    const db = await getDatabase();
 
     // Parallel data fetching for optimal performance
     const [coupleInfo, upcomingEvents, allPhotos] = await Promise.all([

@@ -36,7 +36,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Atomic deletion: Database first, then Cloudinary
     // This prevents orphaned database records if Cloudinary deletion fails
-    const db = getDatabase();
+    const db = await getDatabase();
     const deletedPhoto = db.deletePhoto(photoId);
 
     if (!deletedPhoto) {

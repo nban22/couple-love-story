@@ -1,79 +1,125 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Performance optimizations for production deployment
-  compress: true,              // Enable gzip compression
-  poweredByHeader: false,      // Remove X-Powered-By header for security
-  generateEtags: true,         // Enable ETag generation for caching
-  
-  // Image optimization configuration for Cloudinary integration
+  // Performance optimizations
+  compress: true,
+  poweredByHeader: false,
+  generateEtags: true,
+
+  // Image optimization
   images: {
-    domains: ['res.cloudinary.com'],
-    formats: ['image/webp', 'image/avif'],
-    minimumCacheTTL: 31536000, // 1 year cache TTL for static images
+    domains: ["res.cloudinary.com"],
+    formats: ["image/webp", "image/avif"],
+    minimumCacheTTL: 31536000,
     dangerouslyAllowSVG: false,
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
   },
-  
-  // Security headers implementation
+
+  // Security headers
   async headers() {
     return [
       {
-        // Apply security headers to all routes
-        source: '/(.*)',
+        source: "/(.*)",
         headers: [
           {
-            key: 'X-Frame-Options',
-            value: 'DENY'  // Prevent clickjacking attacks
+            key: "X-Frame-Options",
+            value: "DENY",
           },
           {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff'  // Prevent MIME type sniffing
+            key: "X-Content-Type-Options",
+            value: "nosniff",
           },
           {
-            key: 'Referrer-Policy',
-            value: 'strict-origin-when-cross-origin'  // Control referrer information
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
           },
           {
-            key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=()'  // Disable sensitive APIs
-          }
-        ]
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
+        ],
       },
-      {
-        // API-specific caching headers
-        source: '/api/(.*)',
-        headers: [
-          {
-            key: 'Cache-Control',
-            value: 'no-store, max-age=0'  // Prevent API response caching
-          }
-        ]
-      }
     ];
   },
-  
-  // Webpack bundle optimization
-  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
-    // Implement code splitting strategy for optimal loading performance
+
+  // FIXED WEBPACK CONFIGURATION
+  webpack: (config, { isServer, webpack }) => {
+    // 1. Server-side: externalize client-only packages
+    if (isServer) {
+      config.externals = [
+        ...config.externals,
+        "better-sqlite3",
+        "bcryptjs",
+        "multer",
+        // CRITICAL: Externalize client-only libraries completely
+        { "react-toastify": "react-toastify" },
+        { "react-masonry-css": "react-masonry-css" },
+      ];
+    }
+
+    // 2. Client-side: provide self polyfill
+    if (!isServer) {
+      config.plugins.push(
+        new webpack.DefinePlugin({
+          "typeof self": JSON.stringify("object"),
+          self: "globalThis",
+        })
+      );
+
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+        crypto: false,
+        path: false,
+        os: false,
+      };
+    }
+
+    // 3. Completely separate chunks
     config.optimization.splitChunks = {
-      chunks: 'all',
+      chunks: "all",
       cacheGroups: {
-        vendor: {
-          test: /[\\/]node_modules[\\/]/,
-          name: 'vendors',
-          chunks: 'all',
-        },
+        default: false,
+        vendors: false,
+        // Server-only vendor
+        ...(isServer && {
+          serverVendor: {
+            test: /[\\/]node_modules[\\/](better-sqlite3|bcryptjs|multer)/,
+            name: "server-vendor",
+            chunks: "all",
+            priority: 20,
+            enforce: true,
+          },
+        }),
+        // Client-only vendor - SEPARATE completely
+        ...(!isServer && {
+          clientVendor: {
+            test: /[\\/]node_modules[\\/](react-toastify|react-masonry-css)/,
+            name: "client-vendor",
+            chunks: "all",
+            priority: 20,
+            enforce: true,
+          },
+        }),
       },
     };
-    
+
     return config;
   },
-  
-  // Experimental features - use with caution in production
+
+  // 5. Experimental features with proper separation
   experimental: {
-    scrollRestoration: true,     // Maintain scroll position on navigation,
-    esmExternals: false,
+    scrollRestoration: true,
+    esmExternals: "loose",
+    // IMPORTANT: Specify server-only packages
+    serverComponentsExternalPackages: ["better-sqlite3", "bcryptjs", "multer"],
   },
+
+  // 6. Transpile client-only packages properly
+  transpilePackages: ["react-toastify", "react-masonry-css"],
+
+  output: "standalone",
 };
 
 module.exports = nextConfig;

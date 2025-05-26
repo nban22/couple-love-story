@@ -25,9 +25,6 @@ export default withAuth(
 // Specify which routes require authentication
 export const config = {
   matcher: [
-    '/admin/:path*',    // Admin routes for couple management
-    '/api/couple/:path*', // Couple info API endpoints
-    '/api/events/:path*', // Event management APIs
-    '/api/photos/:path*', // Photo management APIs
+
   ],
 };

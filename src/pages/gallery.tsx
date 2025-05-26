@@ -2,7 +2,7 @@ import React from 'react';
 import { GetServerSideProps } from 'next';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../lib/auth';
-import { getDatabase } from '../lib/database';
+import {getDatabase} from '../lib/database';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useState, useCallback, useMemo } from 'react';
@@ -10,6 +10,9 @@ import { useSession } from 'next-auth/react';
 import { toast } from 'react-toastify';
 import Image from 'next/image';
 import { format, parseISO } from 'date-fns';
+import NavHeader from '@/components/NavHeader';
+import PhotoEditModal from '@/components/PhotoEditModal';
+import DynamicMasonry from '@/components/DynamicMasonry';
 
 interface Photo {
   id: number;
@@ -30,13 +33,12 @@ interface GalleryPageProps {
 }
 
 /**
- * Advanced photo gallery with features:
- * - Responsive masonry layout
- * - Modal lightbox with keyboard navigation
- * - Drag & drop upload
- * - Batch operations
- * - Search and filtering
- * - Virtual scrolling for large collections
+ * Enhanced photo gallery với Masonry Layout
+ * Features:
+ * - Beautiful masonry layout using react-masonry-css
+ * - Responsive breakpoints
+ * - Smooth animations and transitions
+ * - Optimized performance with proper image sizing
  */
 export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps) {
   const { data: session } = useSession();
@@ -47,19 +49,31 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'title'>('newest');
 
+  // State cho edit modal
+  const [editingPhoto, setEditingPhoto] = useState<Photo | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // Masonry breakpoints configuration
+  const breakpointColumnsObj = {
+    default: 4,
+    1100: 3,
+    700: 2,
+    500: 1
+  };
+
   // Memoized filtered and sorted photos for performance
   const filteredPhotos = useMemo(() => {
     let filtered = photos;
-    
+
     // Search filtering
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
-      filtered = photos.filter(photo => 
+      filtered = photos.filter(photo =>
         photo.title?.toLowerCase().includes(term) ||
         photo.description?.toLowerCase().includes(term)
       );
     }
-    
+
     // Sorting
     switch (sortBy) {
       case 'newest':
@@ -83,7 +97,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
     const validFiles = Array.from(files).filter(file => {
       const isValidType = file.type.startsWith('image/');
       const isValidSize = file.size <= 10 * 1024 * 1024; // 10MB limit
-      
+
       if (!isValidType) {
         toast.error(`${file.name} is not a valid image file`);
         return false;
@@ -125,7 +139,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
     try {
       const results = await Promise.all(uploadPromises);
       const successfulUploads = results.filter(result => result !== null);
-      
+
       if (successfulUploads.length > 0) {
         toast.success(`Successfully uploaded ${successfulUploads.length} photo(s)!`);
         // Refresh photos
@@ -154,7 +168,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
       // Optimistic update
       const originalPhotos = photos;
       setPhotos(prev => prev.filter(p => p.id !== photoId));
-      
+
       const response = await fetch(`/api/photos/${photoId}`, {
         method: 'DELETE',
       });
@@ -172,6 +186,23 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
       toast.error('Failed to delete photo');
     }
   }, [session, photos]);
+
+  // Handle edit photo
+  const handleEditPhoto = useCallback((photo: Photo, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening lightbox
+    setEditingPhoto(photo);
+    setIsEditModalOpen(true);
+  }, []);
+
+  // Handle photo update from modal
+  const handlePhotoUpdate = useCallback((updatedPhoto: Photo) => {
+    setPhotos(prev => prev.map(p => p.id === updatedPhoto.id ? updatedPhoto : p));
+
+    // Update selected photo if it's currently selected
+    if (selectedPhoto?.id === updatedPhoto.id) {
+      setSelectedPhoto(updatedPhoto);
+    }
+  }, [selectedPhoto]);
 
   // Keyboard navigation for lightbox
   const handleKeyNavigation = useCallback((e: KeyboardEvent) => {
@@ -223,7 +254,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    
+
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       handlePhotoUpload(files);
@@ -244,32 +275,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
 
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Navigation */}
-        <nav className="flex justify-between items-center mb-8 bg-white/70 backdrop-blur-sm rounded-xl p-4 shadow-sm">
-          <div className="flex space-x-6">
-            <Link href="/" className="text-gray-600 hover:text-pink-600 transition-colors">
-              Home
-            </Link>
-            <Link href="/events" className="text-gray-600 hover:text-pink-600 transition-colors">
-              Events
-            </Link>
-            <span className="font-semibold text-pink-600">Gallery</span>
-          </div>
-          
-          <div className="flex items-center space-x-4">
-            {session ? (
-              <>
-                <span className="text-sm text-gray-600">Welcome, {session.user?.name}</span>
-                <Link href="/api/auth/signout" className="text-sm bg-pink-100 text-pink-600 px-3 py-1 rounded-lg hover:bg-pink-200 transition-colors">
-                  Sign Out
-                </Link>
-              </>
-            ) : (
-              <Link href="/login" className="text-sm bg-pink-500 text-white px-4 py-2 rounded-lg hover:bg-pink-600 transition-colors">
-                Sign In
-              </Link>
-            )}
-          </div>
-        </nav>
+        <NavHeader session={session} />
 
         {/* Header with controls */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 space-y-4 md:space-y-0">
@@ -307,12 +313,11 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
 
         {/* Upload area */}
         {session && (
-          <div 
-            className={`mb-8 border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-              isDragOver 
-                ? 'border-pink-400 bg-pink-50' 
-                : 'border-gray-300 hover:border-pink-300 hover:bg-pink-25'
-            }`}
+          <div
+            className={`mb-8 border-2 border-dashed rounded-xl p-8 text-center transition-colors ${isDragOver
+              ? 'border-pink-400 bg-pink-50'
+              : 'border-gray-300 hover:border-pink-300 hover:bg-pink-25'
+              }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -352,51 +357,76 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
           </div>
         )}
 
-        {/* Photo grid */}
+        {/* Masonry Photo Grid */}
         {filteredPhotos.length > 0 ? (
-          <div className="columns-1 sm:columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
+          <DynamicMasonry
+            breakpointCols={breakpointColumnsObj}
+            className="flex w-auto -ml-4"
+            columnClassName="pl-4 bg-clip-padding"
+          >
             {filteredPhotos.map((photo, index) => (
               <div
                 key={photo.id}
-                className="break-inside-avoid bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer group overflow-hidden"
+                className="mb-4 bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer group overflow-hidden"
                 onClick={() => openPhotoModal(photo, index)}
               >
-                <div className="relative">
+                <div className="relative overflow-hidden rounded-t-xl">
                   <Image
                     src={photo.thumbnails?.medium || photo.public_url}
                     alt={photo.title || `Photo ${photo.id}`}
                     width={400}
                     height={300}
-                    className="w-full h-auto object-cover group-hover:scale-105 transition-transform duration-300"
+                    className="w-full h-auto object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
                     loading="lazy"
+                    sizes="(max-width: 500px) 100vw, (max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw"
                   />
                   
-                  {/* Overlay with photo info */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="absolute bottom-4 left-4 right-4 text-white">
+                  {/* Overlay with gradient */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <div className="absolute bottom-3 left-3 right-3 text-white">
                       {photo.title && (
-                        <h3 className="font-medium truncate">{photo.title}</h3>
+                        <h3 className="font-semibold text-sm truncate mb-1 drop-shadow-lg">
+                          {photo.title}
+                        </h3>
                       )}
-                      <p className="text-xs opacity-80">
+                      <p className="text-xs opacity-90 drop-shadow-lg">
                         {format(parseISO(photo.upload_date), 'MMM d, yyyy')}
                       </p>
                     </div>
                   </div>
+                  
+                  {/* Edit button */}
+                  {session && (
+                    <button
+                      onClick={(e) => handleEditPhoto(photo, e)}
+                      className="absolute top-2 right-2 bg-white/20 backdrop-blur-sm text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-white/30 hover:scale-110 z-10"
+                      aria-label="Edit photo details"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
                 
+                {/* Photo metadata */}
                 {(photo.title || photo.description) && (
                   <div className="p-4">
                     {photo.title && (
-                      <h3 className="font-medium text-gray-800 mb-1 truncate">{photo.title}</h3>
+                      <h3 className="font-semibold text-gray-800 mb-2 leading-tight">
+                        {photo.title}
+                      </h3>
                     )}
                     {photo.description && (
-                      <p className="text-sm text-gray-600 line-clamp-2">{photo.description}</p>
+                      <p className="text-sm text-gray-600 leading-relaxed line-clamp-3">
+                        {photo.description}
+                      </p>
                     )}
                   </div>
                 )}
               </div>
             ))}
-          </div>
+          </DynamicMasonry>
         ) : (
           <div className="text-center py-16">
             <div className="mx-auto h-24 w-24 text-gray-300 mb-4">
@@ -408,8 +438,8 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
               {searchTerm ? 'No photos match your search' : 'No photos yet'}
             </h3>
             <p className="text-gray-500 mb-6">
-              {searchTerm 
-                ? 'Try adjusting your search terms' 
+              {searchTerm
+                ? 'Try adjusting your search terms'
                 : 'Start building your photo collection by uploading your first memories'
               }
             </p>
@@ -421,9 +451,9 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
           </div>
         )}
 
-        {/* Lightbox Modal */}
+        {/* Enhanced Lightbox Modal */}
         {selectedPhoto && (
-          <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black bg-opacity-95 flex items-center justify-center z-50 p-4">
             {/* Navigation buttons */}
             {selectedPhotoIndex > 0 && (
               <button
@@ -432,7 +462,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
                   setSelectedPhoto(filteredPhotos[prevIndex]);
                   setSelectedPhotoIndex(prevIndex);
                 }}
-                className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white rounded-full p-3 hover:bg-opacity-75 transition-colors z-10"
+                className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-white/10 backdrop-blur-sm text-white rounded-full p-3 hover:bg-white/20 transition-all duration-200 z-10"
                 aria-label="Previous photo"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -448,7 +478,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
                   setSelectedPhoto(filteredPhotos[nextIndex]);
                   setSelectedPhotoIndex(nextIndex);
                 }}
-                className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white rounded-full p-3 hover:bg-opacity-75 transition-colors z-10"
+                className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-white/10 backdrop-blur-sm text-white rounded-full p-3 hover:bg-white/20 transition-all duration-200 z-10"
                 aria-label="Next photo"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -457,52 +487,66 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
               </button>
             )}
 
-            {/* Close button */}
-            <button
-              onClick={() => {
-                setSelectedPhoto(null);
-                setSelectedPhotoIndex(-1);
-              }}
-              className="absolute top-4 right-4 bg-black bg-opacity-50 text-white rounded-full p-3 hover:bg-opacity-75 transition-colors z-10"
-              aria-label="Close"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            {/* Delete button for authenticated users */}
-            {session && (
+            {/* Action buttons */}
+            <div className="absolute top-4 right-4 flex space-x-2 z-10">
+              {session && (
+                <>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditPhoto(selectedPhoto, e);
+                    }}
+                    className="bg-blue-500/20 backdrop-blur-sm text-white rounded-full p-3 hover:bg-blue-500/40 transition-all duration-200"
+                    aria-label="Edit photo details"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => handleDeletePhoto(selectedPhoto.id)}
+                    className="bg-red-500/20 backdrop-blur-sm text-white rounded-full p-3 hover:bg-red-500/40 transition-all duration-200"
+                    aria-label="Delete photo"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </>
+              )}
               <button
-                onClick={() => handleDeletePhoto(selectedPhoto.id)}
-                className="absolute top-4 right-20 bg-red-500 bg-opacity-75 text-white rounded-full p-3 hover:bg-opacity-100 transition-colors z-10"
-                aria-label="Delete photo"
+                onClick={() => {
+                  setSelectedPhoto(null);
+                  setSelectedPhotoIndex(-1);
+                }}
+                className="bg-white/10 backdrop-blur-sm text-white rounded-full p-3 hover:bg-white/20 transition-all duration-200"
+                aria-label="Close"
               >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-            )}
+            </div>
 
             {/* Main photo display */}
-            <div className="relative max-w-5xl max-h-[85vh] mx-auto">
+            <div className="relative max-w-6xl max-h-[85vh] mx-auto">
               <Image
                 src={selectedPhoto.thumbnails?.large || selectedPhoto.public_url}
                 alt={selectedPhoto.title || 'Photo'}
                 width={1200}
                 height={800}
-                className="max-w-full max-h-full object-contain"
+                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
                 priority
               />
-              
+
               {/* Photo info overlay */}
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black to-transparent p-6">
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-6 rounded-b-lg">
                 <div className="text-white">
                   {selectedPhoto.title && (
                     <h2 className="text-2xl font-bold mb-2">{selectedPhoto.title}</h2>
                   )}
                   {selectedPhoto.description && (
-                    <p className="text-gray-200 mb-2">{selectedPhoto.description}</p>
+                    <p className="text-gray-200 mb-2 leading-relaxed">{selectedPhoto.description}</p>
                   )}
                   <div className="flex justify-between items-center text-sm text-gray-300">
                     <span>{format(parseISO(selectedPhoto.upload_date), 'MMMM d, yyyy • h:mm a')}</span>
@@ -513,18 +557,38 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
             </div>
           </div>
         )}
+
+        {/* Photo Edit Modal */}
+        <PhotoEditModal
+          photo={editingPhoto}
+          isOpen={isEditModalOpen}
+          onClose={() => {
+            setIsEditModalOpen(false);
+            setEditingPhoto(null);
+          }}
+          onUpdate={handlePhotoUpdate}
+        />
       </div>
+
+      <style jsx>{`
+        .line-clamp-3 {
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+      `}</style>
     </>
   );
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
   try {
-    const db = getDatabase();
+    const db = await getDatabase();
     const photos = db.getAllPhotos();
-    
+
     // Add thumbnail URLs for responsive images
-    const photosWithThumbnails = photos.map(photo => ({
+    const photosWithThumbnails = photos.map((photo: Photo) => ({
       ...photo,
       thumbnails: {
         small: photo.public_url.replace('/upload/', '/upload/w_300,h_200,c_fill,q_auto:low/'),
@@ -532,7 +596,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
         large: photo.public_url.replace('/upload/', '/upload/w_1200,h_800,c_limit,q_auto:good/'),
       },
     }));
-    
+
     return {
       props: {
         photos: photosWithThumbnails,

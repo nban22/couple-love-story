@@ -60,7 +60,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         try {
-          const db = getDatabase();
+          const db = await getDatabase();
           const user = db.getUserByEmail(credentials.email.toLowerCase().trim());
           
           // Always perform bcrypt comparison to prevent timing attacks

@@ -44,33 +44,73 @@ export default function CoupleInfoDisplay({ coupleInfo, isEditable, onUpdate }: 
         className: 'birthday-toast',
       });
     }
-  }, [dateInfo.hasBirthdayToday, coupleInfo.male_name, coupleInfo.female_name]);
+  }, [dateInfo.hasBirthdayToday, coupleInfo.male_name, coupleInfo.female_name, dateInfo.maleBirthday.isToday]);
 
-  // API call with error handling and optimistic updates
+  // API call with comprehensive error handling and timeout
   const handleSave = async () => {
     setIsLoading(true);
+    
+    // Create abort controller for timeout handling
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
     try {
       const response = await fetch('/api/couple/info', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify(editData),
+        signal: controller.signal
       });
 
+      clearTimeout(timeoutId);
+
+      // Check if response is actually JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Server returned non-JSON response');
+      }
+
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Update failed');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
       }
 
       const updatedInfo = await response.json();
+
+      // Validate response structure
+      if (!updatedInfo || typeof updatedInfo !== 'object') {
+        throw new Error('Invalid response format from server');
+      }
+
       onUpdate?.(updatedInfo);
       setIsEditing(false);
       toast.success('Information updated successfully!');
+      
     } catch (error) {
       console.error('Update error:', error);
-      toast.error(`Failed to update: ${(error as Error).message}`);
+      
+      // Specific error handling for different error types
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          toast.error('Request timed out. Please try again.');
+        } else if (error.message.includes('Failed to fetch')) {
+          toast.error('Network error. Please check your connection.');
+        } else if (error.message.includes('Server returned non-JSON')) {
+          toast.error('Server configuration error. Please contact support.');
+        } else {
+          toast.error(`Failed to update: ${error.message}`);
+        }
+      } else {
+        toast.error('An unexpected error occurred. Please try again.');
+      }
+      
       // Reset to original data on error
       setEditData(coupleInfo);
     } finally {
+      clearTimeout(timeoutId);
       setIsLoading(false);
     }
   };
