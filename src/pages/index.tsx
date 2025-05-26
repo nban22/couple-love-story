@@ -64,7 +64,7 @@ export default function HomePage({ coupleInfo, upcomingEvents, featuredPhotos }:
           )}
 
           {/* Upcoming events section with conditional rendering */}
-          {upcomingEvents.length > 0 && (
+          {/* {upcomingEvents.length > 0 && (
             <section>
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-3xl font-bold text-gray-800">Upcoming Events</h2>
@@ -82,7 +82,7 @@ export default function HomePage({ coupleInfo, upcomingEvents, featuredPhotos }:
                 ))}
               </div>
             </section>
-          )}
+          )} */}
 
           {/* Featured photos section with lazy loading preparation */}
           {featuredPhotos.length > 0 && (
