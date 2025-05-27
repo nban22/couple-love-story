@@ -529,13 +529,12 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
             </div>
 
             {/* Main photo display */}
-            <div className="relative max-w-6xl max-h-[85vh] mx-auto">
+            <div className="relative max-w-6xl max-h-[85vh] mx-auto w-full h-full rounded-lg overflow-hidden">
               <Image
                 src={selectedPhoto.thumbnails?.large || selectedPhoto.public_url}
                 alt={selectedPhoto.title || 'Photo'}
-                width={1200}
-                height={800}
-                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                fill
+                className= "object-contain rounded-lg shadow-2xl"
                 priority
               />
 
@@ -543,7 +542,7 @@ export default function GalleryPage({ photos: initialPhotos }: GalleryPageProps)
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-6 rounded-b-lg">
                 <div className="text-white">
                   {selectedPhoto.title && (
-                    <h2 className="text-2xl font-bold mb-2">{selectedPhoto.title}</h2>
+                    <h2 className="text-2xl font-bold mb-2 text-gray-200">{selectedPhoto.title}</h2>
                   )}
                   {selectedPhoto.description && (
                     <p className="text-gray-200 mb-2 leading-relaxed">{selectedPhoto.description}</p>
