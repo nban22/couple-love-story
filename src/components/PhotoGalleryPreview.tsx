@@ -1,4 +1,4 @@
-import React, { useState, memo } from 'react';
+import React, { useState, memo, useEffect, useRef, useMemo } from 'react';
 import Image from 'next/image';
 import { format, parseISO } from 'date-fns';
 
@@ -28,6 +28,21 @@ interface PhotoGalleryPreviewProps {
 const PhotoGalleryPreview = memo<PhotoGalleryPreviewProps>(({ photos, maxPhotos = 6 }) => {
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
   const displayPhotos = photos.slice(0, maxPhotos);
+
+  const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
+
+  useEffect(() => {
+    if (selectedPhoto) {
+      const img = new window.Image();
+      img.src = selectedPhoto.thumbnails?.large || selectedPhoto.public_url;
+      img.onload = () => {
+        setImageDimensions({
+          width: img.naturalWidth || 800,
+          height: img.naturalHeight || 600,
+        });
+      };
+    }
+  }, [selectedPhoto]);
 
   return (
     <>
@@ -73,51 +88,41 @@ const PhotoGalleryPreview = memo<PhotoGalleryPreviewProps>(({ photos, maxPhotos 
           onClick={() => setSelectedPhoto(null)}
         >
           <div
-            className="relative max-w-4xl w-full max-h-[90vh] bg-white rounded-lg overflow-hidden"
+            className="max-w-4xl max-h-[90vh] h-[90vh] min-h-0 rounded-lg overflow-hidden flex flex-col bg-black shadow-lg justify-center"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Close button */}
-            <button
-              onClick={() => setSelectedPhoto(null)}
-              className="absolute top-4 right-4 z-10 bg-black bg-opacity-50 text-white rounded-full p-2 hover:bg-opacity-75 transition-colors"
-              aria-label="Close photo"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            {/* High-resolution image display */}
-            <div className="relative w-full">
-              <Image
-                src={selectedPhoto.thumbnails?.large || selectedPhoto.public_url}
-                alt={selectedPhoto.title || 'Photo'}
-                width={1200}
-                height={0}
-                style={{ width: '100%', height: 'auto' }}
-                className="object-contain"
-                sizes="(max-width: 1200px) 100vw, 1200px"
-                priority // Load modal images with high priority
-              />
-            </div>
-
-            {/* Photo metadata */}
-            {(selectedPhoto.title || selectedPhoto.description) && (
-              <div className="p-6 bg-white">
-                {selectedPhoto.title && (
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">
-                    {selectedPhoto.title}
-                  </h3>
-                )}
-                {selectedPhoto.description && (
-                  <p className="text-gray-600">{selectedPhoto.description}</p>
-                )}
-                <p className="text-sm text-gray-500 mt-2">
-                  {format(parseISO(selectedPhoto.upload_date), 'MMMM d, yyyy • h:mm a')}
-                </p>
+              <div
+                className="min-h-0"
+              >
+                <Image
+                  src={selectedPhoto.thumbnails?.large || selectedPhoto.public_url}
+                  alt={selectedPhoto.title || 'Photo'}
+                  width={imageDimensions.width}
+                  height={imageDimensions.height} 
+                  style={{ maxHeight: '100%', maxWidth: '100%' }}                 
+                  loading="eager"
+                  className="object-contain"
+                  sizes="(max-width: 1200px) 100vw, 1200px"
+                  priority
+                />
               </div>
-            )}
-          </div>
+
+              {(selectedPhoto.title || selectedPhoto.description) && (
+                <div className="p-6 bg-black">
+                  {selectedPhoto.title && (
+                    <h3 className="text-lg font-semibold text-gray-100 mb-2">
+                      {selectedPhoto.title}
+                    </h3>
+                  )}
+                  {selectedPhoto.description && (
+                    <p className="text-gray-400">{selectedPhoto.description}</p>
+                  )}
+                  <p className="text-sm text-gray-400 mt-2">
+                    {format(parseISO(selectedPhoto.upload_date), 'MMMM d, yyyy • h:mm a')}
+                  </p>
+                </div>
+              )}
+            </div>
         </div>
       )}
     </>
