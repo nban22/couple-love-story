@@ -127,7 +127,12 @@ const nextConfig = {
   // 6. Transpile client-only packages properly
   transpilePackages: ["react-toastify", "react-masonry-css"],
 
-  // output: "standalone",
+  // Disable SWC and use Babel instead
+  swcMinify: false,
+  compiler: {
+    // Disable SWC
+    swc: false,
+  },
 };
 
 module.exports = nextConfig;

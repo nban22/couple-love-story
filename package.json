@@ -10,6 +10,7 @@
     "build:clean": "rm -rf .next && npm run build"
   },
   "dependencies": {
+    "@babel/core": "^7.23.7",
     "@next-auth/prisma-adapter": "^1.0.7",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.0.1",
@@ -25,6 +26,9 @@
     "react-toastify": "^10.0.6"
   },
   "devDependencies": {
+    "@babel/preset-env": "^7.23.8",
+    "@babel/preset-react": "^7.23.3",
+    "@babel/preset-typescript": "^7.23.3",
     "@types/bcryptjs": "^2.4.6",
     "@types/pg": "^8.10.9",
     "@tailwindcss/forms": "^0.5.10",
